@@ -25,7 +25,8 @@ VoxAC30Editor::AmpKnob::AmpKnob (juce::AudioProcessorValueTreeState& state, cons
     : attachment (state, paramId, slider)
 {
     slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    slider.setRotaryParameters (juce::degreesToRadians (-150.0f), juce::degreesToRadians (150.0f), true);
+    // JUCE requires non-negative angles: 210..510 deg == -150..+150 deg around 12 o'clock.
+    slider.setRotaryParameters (juce::degreesToRadians (210.0f), juce::degreesToRadians (510.0f), true);
     slider.setTextBoxStyle (juce::Slider::TextBoxBelow, true, 64, 22);
     slider.setMouseDragSensitivity (260);                 // comfortable finger travel
     slider.setVelocityBasedMode (false);
