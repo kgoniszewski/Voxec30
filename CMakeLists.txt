@@ -94,7 +94,6 @@ juce_add_plugin(VoxAC30
     FILE_SHARING_ENABLED          TRUE
     DOCUMENT_BROWSER_ENABLED      TRUE
     STATUS_BAR_HIDDEN             TRUE
-    REQUIRES_FULL_SCREEN          TRUE
     TARGETED_DEVICE_FAMILY        2
     IPAD_SCREEN_ORIENTATIONS      UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
     IPHONE_SCREEN_ORIENTATIONS    UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight)
@@ -126,7 +125,6 @@ target_compile_definitions(VoxAC30 PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
-    JUCE_DISPLAY_SPLASH_SCREEN=0
     JUCE_USE_XINPUT=0)                      # Linux dev builds only, ignored on Apple
 
 target_link_libraries(VoxAC30

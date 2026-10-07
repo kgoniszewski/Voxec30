@@ -61,6 +61,8 @@ private:
     void timerCallback() override;
     void valueChanged (juce::Value&) override;
 
+    void showAudioSettings();
+    void closeAudioSettings();
     void chooseImpulseResponse();
     void importImpulseResponse (const juce::URL& url);
     void updateInputButton();
@@ -71,7 +73,7 @@ private:
     void paintGrille (juce::Graphics&, juce::Rectangle<float>) const;
 
     //==============================================================================
-    VoxAC30Processor& processor;
+    VoxAC30Processor& ampProcessor;   // (AudioProcessorEditor::processor is the base-class reference)
     vox::gui::VoxLookAndFeel lookAndFeel;
 
     AmpKnob volumeKnob, trebleKnob, bassKnob, cutKnob, masterKnob;
@@ -86,6 +88,7 @@ private:
 
     juce::Value inputMuted;
     std::unique_ptr<juce::FileChooser> fileChooser;
+    std::unique_ptr<juce::Component> audioSettingsOverlay;
 
     juce::Image backgroundCache;
     juce::Rectangle<float> headerArea, panelArea, grilleArea, toolbarArea;
