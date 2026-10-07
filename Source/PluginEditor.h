@@ -71,7 +71,7 @@ private:
     void paintGrille (juce::Graphics&, juce::Rectangle<float>) const;
 
     //==============================================================================
-    VoxAC30Processor& processor;
+    VoxAC30Processor& ampProcessor;   // (AudioProcessorEditor::processor is the base-class reference)
     vox::gui::VoxLookAndFeel lookAndFeel;
 
     AmpKnob volumeKnob, trebleKnob, bassKnob, cutKnob, masterKnob;

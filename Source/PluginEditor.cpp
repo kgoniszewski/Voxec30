@@ -63,7 +63,7 @@ void VoxAC30Editor::AmpKnob::resized()
     subtitle.setBounds (r.removeFromBottom (juce::roundToInt (h * 0.08f)));
 
     slider.setTextBoxStyle (juce::Slider::TextBoxBelow, true,
-                            juce::roundToInt (r.getWidth() * 0.6f), juce::roundToInt (h * 0.1f));
+                            juce::roundToInt ((float) r.getWidth() * 0.6f), juce::roundToInt (h * 0.1f));
     slider.setBounds (r);
 }
 
@@ -116,7 +116,7 @@ void VoxAC30Editor::LevelMeter::paint (juce::Graphics& g)
 //==============================================================================
 VoxAC30Editor::VoxAC30Editor (VoxAC30Processor& p)
     : AudioProcessorEditor (p),
-      processor (p),
+      ampProcessor (p),
       volumeKnob (p.getValueTreeState(), VoxParams::volume, "VOLUME", "Top Boost"),
       trebleKnob (p.getValueTreeState(), VoxParams::treble, "TREBLE"),
       bassKnob   (p.getValueTreeState(), VoxParams::bass,   "BASS"),
@@ -140,7 +140,7 @@ VoxAC30Editor::VoxAC30Editor (VoxAC30Processor& p)
 
     defaultIrButton.onClick = [this]
     {
-        processor.loadDefaultCabinetIR();
+        ampProcessor.loadDefaultCabinetIR();
         updateCabinetLabel();
     };
     addAndMakeVisible (defaultIrButton);
@@ -164,20 +164,35 @@ VoxAC30Editor::VoxAC30Editor (VoxAC30Processor& p)
         addAndMakeVisible (inputButton);
         updateInputButton();
 
-        // Guitar playing needs low round-trip latency: default to 128 samples
-        // (~2.7 ms @ 48 kHz) unless the user already chose a small buffer.
-        auto& deviceManager = holder->deviceManager;
-        auto setup = deviceManager.getAudioDeviceSetup();
-        if (setup.bufferSize <= 0 || setup.bufferSize > 256)
+        // Guitar playing needs low round-trip latency (JUCE's iOS default is 256).
+        // Applied ONCE on first launch: every device re-open re-activates the
+        // AVAudioSession on the main thread (Xcode "Hang Risk"), and afterwards
+        // the standalone holder restores the saved device setup by itself.
+        if (auto* props = holder->settings.get(); props != nullptr && ! props->getBoolValue ("voxLowLatencyDefaultApplied"))
         {
-            setup.bufferSize = 128;
-            deviceManager.setAudioDeviceSetup (setup, true);
+            props->setValue ("voxLowLatencyDefaultApplied", true);
+
+            auto& deviceManager = holder->deviceManager;
+            auto setup = deviceManager.getAudioDeviceSetup();
+
+            if (setup.bufferSize <= 0 || setup.bufferSize > 128)
+            {
+                setup.bufferSize = 128;
+                deviceManager.setAudioDeviceSetup (setup, true);
+                holder->saveAudioDeviceState();   // iPadOS often kills apps without a clean shutdown
+            }
         }
     }
 
     setOpaque (true);
+   #if JUCE_IOS
+    // On iPadOS 26+ the window size is owned by the system (Stage Manager /
+    // windowed apps), so the editor must accept any size the scene gives it.
+    setResizable (false, false);
+   #else
     setResizable (true, true);
     setResizeLimits (800, 560, 2732, 2048);
+   #endif
     setSize (1194, 834);                 // iPad Pro 11" landscape (points)
 
     startTimerHz (30);
@@ -192,9 +207,9 @@ VoxAC30Editor::~VoxAC30Editor()
 //==============================================================================
 void VoxAC30Editor::timerCallback()
 {
-    inputMeter.push (processor.getInputPeak());
+    inputMeter.push (ampProcessor.getInputPeak());
 
-    const float out = processor.getOutputPeak();
+    const float out = ampProcessor.getOutputPeak();
     outputMeter.push (out);
 
     const float newPhase = juce::jlimit (0.0f, 1.0f, out * 1.5f);
@@ -219,7 +234,7 @@ void VoxAC30Editor::updateInputButton()
 
 void VoxAC30Editor::updateCabinetLabel()
 {
-    irLabel.setText ("IR: " + processor.getCabinetName(), juce::dontSendNotification);
+    irLabel.setText ("IR: " + ampProcessor.getCabinetName(), juce::dontSendNotification);
 }
 
 //==============================================================================
@@ -253,7 +268,7 @@ void VoxAC30Editor::importImpulseResponse (const juce::URL& url)
 
     if (url.isLocalFile() && url.getLocalFile() == dest)
     {
-        ok = processor.loadCabinetIR (dest);
+        ok = ampProcessor.loadCabinetIR (dest);
     }
     else if (auto in = url.createInputStream (juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)))
     {
@@ -263,7 +278,7 @@ void VoxAC30Editor::importImpulseResponse (const juce::URL& url)
             ok = out.openedOk() && out.writeFromInputStream (*in, -1) > 0;
             out.flush();
         }
-        ok = ok && processor.loadCabinetIR (dest);
+        ok = ok && ampProcessor.loadCabinetIR (dest);
     }
 
     if (! ok)
@@ -369,7 +384,7 @@ void VoxAC30Editor::paintPanel (juce::Graphics& g, juce::Rectangle<float> r) con
     g.drawText ("MASTER SECTION", top, Justification::centredRight);
 
     // separator between channel and master section (between CUT and MASTER)
-    const float sepX = masterKnob.getX() - r.getWidth() * 0.012f;
+    const float sepX = (float) masterKnob.getX() - r.getWidth() * 0.012f;
     g.setColour (Palette::panelInk.withAlpha (0.4f));
     g.drawLine (sepX, r.getY() + r.getHeight() * 0.18f, sepX, r.getBottom() - r.getHeight() * 0.12f, 2.0f);
 
