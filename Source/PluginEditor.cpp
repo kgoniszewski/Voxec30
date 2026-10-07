@@ -17,6 +17,86 @@ namespace
         return nullptr;
        #endif
     }
+
+    //==============================================================================
+    /** In-app audio device panel.
+
+        JUCE's StandalonePluginHolder::showAudioSettingsDialog() opens a DialogWindow
+        with a "native title bar"; on iPadOS that becomes a full-screen window with
+        no close button, so the user can never get back to the amp. This overlay
+        lives inside the editor and always has a DONE button. */
+    class AudioSettingsOverlay final : public juce::Component
+    {
+    public:
+        AudioSettingsOverlay (juce::AudioDeviceManager& dm, int maxInputs, int maxOutputs, std::function<void()> onDone)
+            : selector (dm,
+                        0, juce::jmax (1, maxInputs),    // input channels
+                        0, juce::jmax (1, maxOutputs),   // output channels
+                        false,                           // no MIDI inputs
+                        false,                           // no MIDI output
+                        false,                           // channels as single items (mono)
+                        false)                           // show sample rate / buffer size
+        {
+            title.setText ("AUDIO I/O", juce::dontSendNotification);
+            title.setJustificationType (juce::Justification::centredLeft);
+            title.setColour (juce::Label::textColourId, Palette::copperLight);
+            addAndMakeVisible (title);
+
+            hint.setText ("AXE I/O One: input 1 = guitar, output 1 = amp out. 48 kHz, 64-128 samples recommended.",
+                          juce::dontSendNotification);
+            hint.setColour (juce::Label::textColourId, Palette::cream.withAlpha (0.7f));
+            addAndMakeVisible (hint);
+
+            doneButton.onClick = std::move (onDone);
+            doneButton.setToggleState (true, juce::dontSendNotification);   // copper highlight
+            addAndMakeVisible (doneButton);
+
+            viewport.setViewedComponent (&selector, false);
+            viewport.setScrollBarsShown (true, false);
+            addAndMakeVisible (viewport);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            g.fillAll (juce::Colours::black.withAlpha (0.6f));
+
+            g.setColour (juce::Colour (0xff1c1916));
+            g.fillRoundedRectangle (panel, 14.0f);
+            g.setColour (Palette::copperDark);
+            g.drawRoundedRectangle (panel, 14.0f, 2.0f);
+        }
+
+        void resized() override
+        {
+            const auto b = getLocalBounds().toFloat();
+            panel = b.withSizeKeepingCentre (juce::jmin (760.0f, b.getWidth() - 32.0f),
+                                             juce::jmin (640.0f, b.getHeight() - 32.0f));
+
+            auto r = panel.reduced (20.0f).toNearestInt();
+            auto top = r.removeFromTop (56);
+            doneButton.setBounds (top.removeFromRight (140).reduced (0, 4));
+            title.setFont (VoxLookAndFeel::panelFont (28.0f));
+            title.setBounds (top);
+
+            hint.setFont (VoxLookAndFeel::panelFont (15.0f, false));
+            hint.setBounds (r.removeFromTop (30));
+            r.removeFromTop (8);
+
+            viewport.setBounds (r);
+            selector.setSize (r.getWidth() - viewport.getScrollBarThickness(),
+                              juce::jmax (r.getHeight(), 420));
+        }
+
+        // swallow touches so the amp underneath can't be operated blind
+        void mouseDown (const juce::MouseEvent&) override {}
+
+    private:
+        juce::Label title, hint;
+        juce::TextButton doneButton { "DONE" };
+        juce::AudioDeviceSelectorComponent selector;
+        juce::Viewport viewport;
+        juce::Rectangle<float> panel;
+    };
 }
 
 //==============================================================================
@@ -153,7 +233,7 @@ VoxAC30Editor::VoxAC30Editor (VoxAC30Processor& p)
     if (auto* holder = standaloneHolder())
     {
         // Audio device / channel routing (AXE I/O One: input 1 -> output 1).
-        audioButton.onClick = [] { if (auto* h = standaloneHolder()) h->showAudioSettingsDialog(); };
+        audioButton.onClick = [this] { showAudioSettings(); };
         addAndMakeVisible (audioButton);
 
         // JUCE mutes the input of a fresh standalone app to avoid feedback with
@@ -196,6 +276,38 @@ VoxAC30Editor::VoxAC30Editor (VoxAC30Processor& p)
     setSize (1194, 834);                 // iPad Pro 11" landscape (points)
 
     startTimerHz (30);
+}
+
+void VoxAC30Editor::showAudioSettings()
+{
+    auto* holder = standaloneHolder();
+    if (holder == nullptr || audioSettingsOverlay != nullptr)
+        return;
+
+    auto channelsOf = [this] (bool isInput)
+    {
+        auto* bus = ampProcessor.getBus (isInput, 0);
+        return bus != nullptr ? bus->getDefaultLayout().size() : 1;
+    };
+
+    audioSettingsOverlay = std::make_unique<AudioSettingsOverlay> (holder->deviceManager,
+                                                                   channelsOf (true), channelsOf (false),
+                                                                   [this] { closeAudioSettings(); });
+    addAndMakeVisible (*audioSettingsOverlay);
+    audioSettingsOverlay->setBounds (getLocalBounds());
+}
+
+void VoxAC30Editor::closeAudioSettings()
+{
+    if (auto* holder = standaloneHolder())
+        holder->saveAudioDeviceState();   // persist immediately (iPadOS may kill the app later)
+
+    // Defer destruction: we are inside the DONE button's onClick.
+    juce::MessageManager::callAsync ([safeThis = juce::Component::SafePointer<VoxAC30Editor> (this)]
+    {
+        if (safeThis != nullptr)
+            safeThis->audioSettingsOverlay.reset();
+    });
 }
 
 VoxAC30Editor::~VoxAC30Editor()
@@ -513,4 +625,7 @@ void VoxAC30Editor::resized()
     irLabel.setBounds (tb);
 
     renderBackground();
+
+    if (audioSettingsOverlay != nullptr)
+        audioSettingsOverlay->setBounds (getLocalBounds());
 }

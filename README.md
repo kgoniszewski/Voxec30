@@ -75,7 +75,7 @@ Opcje CMake:
 2. Gitara → wejście **Input 1** (instrumentalne), słuchawki/monitory → **Output 1** (lub para 1/2).
 3. Uruchom aplikację i naciśnij **INPUT: MUTED**, aby przełączyć na **INPUT: LIVE**
    (JUCE domyślnie wycisza wejście aplikacji standalone, by uniknąć sprzężenia mikrofon–głośnik iPada).
-4. **AUDIO I/O** otwiera ustawienia urządzenia: częstotliwość 48 kHz, bufor 64–128 próbek.
+4. **AUDIO I/O** otwiera panel ustawień urządzenia wewnątrz aplikacji (zamykany przyciskiem **DONE**): częstotliwość 48 kHz, bufor 64–128 próbek.
    Przy pierwszym uruchomieniu aplikacja jednorazowo ustawia bufor 128 (JUCE domyślnie używa 256);
    później obowiązuje zapisany wybór użytkownika.
 5. Ustaw wzmocnienie wejścia w AXE I/O tak, by wskaźnik **IN** przy mocnym uderzeniu

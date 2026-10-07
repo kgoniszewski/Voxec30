@@ -61,6 +61,8 @@ private:
     void timerCallback() override;
     void valueChanged (juce::Value&) override;
 
+    void showAudioSettings();
+    void closeAudioSettings();
     void chooseImpulseResponse();
     void importImpulseResponse (const juce::URL& url);
     void updateInputButton();
@@ -86,6 +88,7 @@ private:
 
     juce::Value inputMuted;
     std::unique_ptr<juce::FileChooser> fileChooser;
+    std::unique_ptr<juce::Component> audioSettingsOverlay;
 
     juce::Image backgroundCache;
     juce::Rectangle<float> headerArea, panelArea, grilleArea, toolbarArea;
