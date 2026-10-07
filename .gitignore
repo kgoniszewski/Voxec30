@@ -1,0 +1,14 @@
+# CMake / Xcode build trees
+build/
+build-*/
+cmake-build-*/
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+
+# Local JUCE checkout (optional, see VOX_JUCE_PATH)
+JUCE/
+
+.DS_Store
+*.swp
