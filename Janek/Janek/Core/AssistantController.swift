@@ -93,6 +93,12 @@ final class AssistantController: ToolContext {
             ) { [weak self] _ in
                 MainActor.assumeIsolated { self?.audioSessionMayResume() }
             },
+            // Np. podłączono mikrofon – jeśli wcześniej go brakowało, spróbuj ponownie.
+            NotificationCenter.default.addObserver(
+                forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.audioRouteChanged() }
+            },
         ]
     }
 
@@ -145,7 +151,8 @@ final class AssistantController: ToolContext {
     func resumeWakeListening(forceRestart: Bool = false) {
         guard !state.isBusy else { return }
         listener.configure(sensitivity: settings.wakeSensitivity, onDevice: settings.onDeviceRecognition)
-        guard settings.wakeWordEnabled, SpeechListener.isAuthorized, AudioSessionController.recordPermissionGranted else {
+        // Nie dotykamy audio przed zakończeniem konfiguracji (ekran powitalny, nadawanie zgód).
+        guard settings.hasCompletedOnboarding, settings.wakeWordEnabled, SpeechListener.isAuthorized, AudioSessionController.recordPermissionGranted else {
             listener.stop()
             state = .idle
             return
@@ -229,6 +236,15 @@ final class AssistantController: ToolContext {
     private func audioSessionBecameInactive() {
         listener.stop()
         speech.stop()
+    }
+
+    @ObservationIgnored private var lastRouteRetry = Date.distantPast
+
+    private func audioRouteChanged() {
+        // Ograniczenie częstotliwości – sama aktywacja sesji też potrafi zgłosić zmianę trasy.
+        guard case .error = state, Date.now.timeIntervalSince(lastRouteRetry) > 5 else { return }
+        lastRouteRetry = .now
+        resumeWakeListening()
     }
 
     private func audioSessionMayResume() {

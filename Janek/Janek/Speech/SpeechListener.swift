@@ -42,7 +42,7 @@ final class SpeechListener {
 
     private let logger = Logger(subsystem: "pl.janek.assistant", category: "speech")
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "pl-PL"))
-    private var engine = AVAudioEngine()
+    private let engine = AVAudioEngine()
     private let router = AudioBufferRouter()
     private var task: SFSpeechRecognitionTask?
     private var generation = 0
@@ -56,9 +56,6 @@ final class SpeechListener {
     private var onDevice = true
     /// Kolejne błędy rozpoznawania bez żadnego wyniku – do wycofywania się zamiast pętli restartów.
     private var consecutiveErrors = 0
-    /// Stare silniki audio trzymamy przy życiu: zwolnienie silnika wymaga wywołania usługi audio
-    /// systemu, które w symulatorze potrafi przekroczyć limit czasu i zamknąć aplikację.
-    private var retiredEngines: [AVAudioEngine] = []
 
     // Wykrywanie końca polecenia
     private var commandText = ""
@@ -84,22 +81,11 @@ final class SpeechListener {
 
     /// Zmiana trasy audio (słuchawki, CarPlay, połączenie) zatrzymuje silnik – wznawiamy nasłuch.
     private func observeEngine() {
-        if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
         configurationObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.restartAfterConfigurationChange() }
         }
-    }
-
-    /// Nowy silnik audio. Stary potrafi pamiętać format wejścia sprzed zmiany urządzenia
-    /// (np. mikrofon USB podłączony po uruchomieniu aplikacji) i zwracać 0 Hz.
-    private func recreateEngine() {
-        if engine.isRunning { engine.stop() }
-        engine.inputNode.removeTap(onBus: 0)
-        if retiredEngines.count < 3 { retiredEngines.append(engine) }
-        engine = AVAudioEngine()
-        observeEngine()
     }
 
     /// Opis stanu wejścia audio do komunikatu błędu i logów.
@@ -159,15 +145,14 @@ final class SpeechListener {
         guard token == startToken else { return }
 
         var format = engine.inputNode.outputFormat(forBus: 0)
-        // Trasa audio bywa chwilowo w trakcie przebudowy (okno zgody, nowe urządzenie) –
-        // kilka prób z nowym silnikiem audio, coraz dłuższe odstępy.
-        for (attempt, delay) in [300, 600, 900].enumerated() where !Self.isUsable(format) {
+        // Trasa audio bywa chwilowo w trakcie przebudowy (okno zgody, nowe urządzenie) – czekamy.
+        // Nie tworzymy nowego AVAudioEngine: gdy usługa audio systemu nie odpowiada (format 0 Hz),
+        // utworzenie/zwolnienie silnika kończy się zablokowaniem i przerwaniem aplikacji przez iOS.
+        // Gdy wejście zacznie działać, nasłuch wznowi się po powiadomieniu o zmianie trasy audio.
+        for delay in [300, 600] where !Self.isUsable(format) {
             logger.info("Nieprawidłowy format wejścia: \(Self.inputDiagnostics(format: format), privacy: .public)")
             try? await Task.sleep(for: .milliseconds(delay))
             guard token == startToken else { return }
-            // Nowy silnik tylko przy ostatniej próbie i najwyżej raz na start – częste
-            // tworzenie/zwalnianie silników obciąża usługę audio systemu.
-            if attempt == 2 { recreateEngine() }
             format = engine.inputNode.outputFormat(forBus: 0)
         }
         // Format 0 Hz / 0 kanałów = brak mikrofonu. installTap rzuciłby wtedy wyjątkiem Obj-C (awaria aplikacji).
