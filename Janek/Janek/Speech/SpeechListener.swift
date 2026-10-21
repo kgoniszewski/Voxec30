@@ -14,17 +14,17 @@ final class SpeechListener {
 
     enum ListenerError: LocalizedError {
         case recognizerUnavailable
-        case microphoneUnavailable
+        case microphoneUnavailable(details: String)
 
         var errorDescription: String? {
             switch self {
             case .recognizerUnavailable:
                 return "Rozpoznawanie mowy po polsku jest teraz niedostępne."
-            case .microphoneUnavailable:
+            case .microphoneUnavailable(let details):
                 #if targetEnvironment(simulator)
-                return "Brak mikrofonu. Mac mini nie ma wbudowanego mikrofonu – podłącz słuchawki lub mikrofon i wybierz go w Symulatorze: I/O → Audio Input. Możesz też wpisywać polecenia."
+                return "Symulator nie widzi mikrofonu (\(details)). Wybierz mikrofon w menu Symulatora: I/O → Audio Input, zezwól Symulatorowi na mikrofon w macOS i uruchom Symulator ponownie. Możesz też wpisywać polecenia."
                 #else
-                return "Mikrofon jest niedostępny. Sprawdź zgodę na mikrofon w Ustawieniach iOS → Janek."
+                return "Mikrofon jest niedostępny (\(details)). Sprawdź zgodę na mikrofon w Ustawieniach iOS → Janek."
                 #endif
             }
         }
@@ -42,7 +42,7 @@ final class SpeechListener {
 
     private let logger = Logger(subsystem: "pl.janek.assistant", category: "speech")
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "pl-PL"))
-    private let engine = AVAudioEngine()
+    private var engine = AVAudioEngine()
     private let router = AudioBufferRouter()
     private var task: SFSpeechRecognitionTask?
     private var generation = 0
@@ -74,12 +74,33 @@ final class SpeechListener {
     var supportsOnDevice: Bool { recognizer?.supportsOnDeviceRecognition ?? false }
 
     init() {
-        // Zmiana trasy audio (słuchawki, CarPlay, połączenie) zatrzymuje silnik – wznawiamy nasłuch.
+        observeEngine()
+    }
+
+    /// Zmiana trasy audio (słuchawki, CarPlay, połączenie) zatrzymuje silnik – wznawiamy nasłuch.
+    private func observeEngine() {
+        if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
         configurationObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.restartAfterConfigurationChange() }
         }
+    }
+
+    /// Nowy silnik audio. Stary potrafi pamiętać format wejścia sprzed zmiany urządzenia
+    /// (np. mikrofon USB podłączony po uruchomieniu aplikacji) i zwracać 0 Hz.
+    private func recreateEngine() {
+        if engine.isRunning { engine.stop() }
+        engine.inputNode.removeTap(onBus: 0)
+        engine = AVAudioEngine()
+        observeEngine()
+    }
+
+    /// Opis stanu wejścia audio do komunikatu błędu i logów.
+    private static func inputDiagnostics(format: AVAudioFormat) -> String {
+        let session = AVAudioSession.sharedInstance()
+        let inputs = session.currentRoute.inputs.map(\.portName).joined(separator: ", ")
+        return "wejście: \(inputs.isEmpty ? "brak" : inputs), \(Int(format.sampleRate)) Hz, kanały: \(format.channelCount), dostępne: \(session.isInputAvailable ? "tak" : "nie")"
     }
 
     func configure(sensitivity: WakeSensitivity, onDevice: Bool) {
@@ -131,19 +152,22 @@ final class SpeechListener {
         // W międzyczasie ktoś zatrzymał albo ponownie uruchomił nasłuch.
         guard token == startToken else { return }
 
-        let input = engine.inputNode
-        var format = input.outputFormat(forBus: 0)
-        if !Self.isUsable(format) {
-            // Trasa audio bywa chwilowo w trakcie przebudowy (np. po oknie zgody) – czekamy chwilę.
-            try? await Task.sleep(for: .milliseconds(500))
+        var format = engine.inputNode.outputFormat(forBus: 0)
+        // Trasa audio bywa chwilowo w trakcie przebudowy (okno zgody, nowe urządzenie) –
+        // kilka prób z nowym silnikiem audio, coraz dłuższe odstępy.
+        for delay in [200, 400, 800] where !Self.isUsable(format) {
+            logger.info("Nieprawidłowy format wejścia: \(Self.inputDiagnostics(format: format), privacy: .public)")
+            try? await Task.sleep(for: .milliseconds(delay))
             guard token == startToken else { return }
-            format = input.outputFormat(forBus: 0)
+            recreateEngine()
+            format = engine.inputNode.outputFormat(forBus: 0)
         }
         // Format 0 Hz / 0 kanałów = brak mikrofonu. installTap rzuciłby wtedy wyjątkiem Obj-C (awaria aplikacji).
         guard Self.isUsable(format) else {
             mode = .idle
-            throw ListenerError.microphoneUnavailable
+            throw ListenerError.microphoneUnavailable(details: Self.inputDiagnostics(format: format))
         }
+        let input = engine.inputNode
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 1024, format: format, block: router.tapBlock())
         engine.prepare()

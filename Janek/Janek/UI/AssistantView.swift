@@ -11,10 +11,11 @@ struct AssistantView: View {
 
             VStack(spacing: 16) {
                 Text(controller.state.title)
-                    .font(.title3.weight(.medium))
+                    .font(isError ? .callout : .title3.weight(.medium))
                     .multilineTextAlignment(.center)
                     .foregroundStyle(isError ? Color.red : Color.primary)
-                    .lineLimit(3)
+                    .lineLimit(isError ? 8 : 3)
+                    .textSelection(.enabled)
                     .frame(minHeight: 56)
                     .padding(.horizontal)
                     .contentTransition(.opacity)
