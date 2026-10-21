@@ -10,7 +10,7 @@ struct RootView: View {
         NavigationStack {
             AssistantView()
         }
-        .onAppear { showOnboarding = !settings.hasCompletedOnboarding || !KeychainStore.hasAPIKey }
+        .onAppear { showOnboarding = !settings.hasCompletedOnboarding || (!KeychainStore.hasAPIKey && settings.aiMode != .local) }
         .fullScreenCover(isPresented: $showOnboarding) {
             OnboardingView {
                 showOnboarding = false

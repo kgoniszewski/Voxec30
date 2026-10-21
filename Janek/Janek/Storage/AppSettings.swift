@@ -33,13 +33,17 @@ final class AppSettings {
     var alarmSound: AlarmSound { didSet { defaults.set(alarmSound.rawValue, forKey: "alarmSound") } }
     var playEarcons: Bool { didSet { defaults.set(playEarcons, forKey: "earcons") } }
     var hasCompletedOnboarding: Bool { didSet { defaults.set(hasCompletedOnboarding, forKey: "onboarded") } }
+    var aiMode: AIMode { didSet { defaults.set(aiMode.rawValue, forKey: "aiMode") } }
+    var localEngine: LocalEngineChoice { didSet { defaults.set(localEngine.rawValue, forKey: "localEngine") } }
+    var localModel: LocalModelPreset { didSet { defaults.set(localModel.rawValue, forKey: "localModel") } }
 
     private init() {
         defaults.register(defaults: [
             "model": ClaudeModel.opus.rawValue, "effort": ClaudeEffort.low.rawValue, "webSearch": true,
             "wakeWord": true, "wakeSensitivity": WakeSensitivity.normal.rawValue, "listenInBackground": true,
             "onDevice": true, "speechRate": AVSpeechUtteranceDefaultSpeechRate, "alarmSound": AlarmSound.classic.rawValue,
-            "earcons": true, "onboarded": false,
+            "earcons": true, "onboarded": false, "aiMode": AIMode.hybrid.rawValue,
+            "localEngine": LocalEngineChoice.automatic.rawValue, "localModel": LocalModelPreset.qwen3_4b.rawValue,
         ])
         model = ClaudeModel(rawValue: defaults.string(forKey: "model") ?? "") ?? .opus
         effort = ClaudeEffort(rawValue: defaults.string(forKey: "effort") ?? "") ?? .low
@@ -53,5 +57,8 @@ final class AppSettings {
         alarmSound = AlarmSound(rawValue: defaults.string(forKey: "alarmSound") ?? "") ?? .classic
         playEarcons = defaults.bool(forKey: "earcons")
         hasCompletedOnboarding = defaults.bool(forKey: "onboarded")
+        aiMode = AIMode(rawValue: defaults.string(forKey: "aiMode") ?? "") ?? .hybrid
+        localEngine = LocalEngineChoice(rawValue: defaults.string(forKey: "localEngine") ?? "") ?? .automatic
+        localModel = LocalModelPreset(rawValue: defaults.string(forKey: "localModel") ?? "") ?? .qwen3_4b
     }
 }

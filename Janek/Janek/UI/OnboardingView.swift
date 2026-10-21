@@ -62,6 +62,12 @@ struct OnboardingView: View {
             .controlSize(.large)
             .frame(maxWidth: .infinity)
             .disabled(apiKey.trimmingCharacters(in: .whitespaces).isEmpty || verifying)
+            Button("Używaj bez klucza – tylko model na telefonie") {
+                settings.aiMode = .local
+                withAnimation { page = 2 }
+            }
+            .frame(maxWidth: .infinity)
+            .font(.footnote)
         }
         .padding(32)
     }
@@ -72,6 +78,11 @@ struct OnboardingView: View {
             Text("Janek potrzebuje mikrofonu i rozpoznawania mowy, by słyszeć „Hej Janek”. Nasłuch frazy działa w całości na urządzeniu. O dostęp do kalendarza, kontaktów, lokalizacji czy Zdrowia zapytam dopiero wtedy, gdy będzie potrzebny.")
                 .foregroundStyle(.secondary)
             PermissionsList()
+            if settings.aiMode == .local {
+                Text("Tryb tylko na telefonie: pobierz model w Ustawieniach → Model na telefonie (np. Qwen3 4B lub Bielik).")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
             Spacer()
             Button("Zaczynamy") {
                 settings.hasCompletedOnboarding = true
@@ -80,7 +91,7 @@ struct OnboardingView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .frame(maxWidth: .infinity)
-            .disabled(!KeychainStore.hasAPIKey)
+            .disabled(!KeychainStore.hasAPIKey && settings.aiMode != .local)
         }
         .padding(32)
     }

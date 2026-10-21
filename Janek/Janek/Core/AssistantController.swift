@@ -55,6 +55,12 @@ final class AssistantController: ToolContext {
     @ObservationIgnored private let listener = SpeechListener()
     @ObservationIgnored private let speech = SpeechOutput()
     @ObservationIgnored private let agent = ConversationAgent()
+    @ObservationIgnored private let local = LocalAssistant()
+    /// Claude zadał pytanie – odpowiedź musi wrócić do Claude (model lokalny nie zna kontekstu).
+    @ObservationIgnored private var claudeFollowUpUntil = Date.distantPast
+    private var awaitingClaudeFollowUp: Bool { Date.now < claudeFollowUpUntil }
+    /// Silnik, który obsłużył ostatnie polecenie (widoczne w UI).
+    private(set) var lastEngine: String?
     @ObservationIgnored private var currentTurn: Task<Void, Never>?
     @ObservationIgnored private var scenePhase: ScenePhase = .active
     @ObservationIgnored private var interruptionObserver: NSObjectProtocol?
@@ -69,6 +75,11 @@ final class AssistantController: ToolContext {
         }
         agent.onToolActivity = { [weak self] name in
             self?.state = .thinking(activity: ToolActivity.description(for: name))
+        }
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { MLXEngine.shared.unload() }
         }
         interruptionObserver = NotificationCenter.default.addObserver(
             forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
@@ -97,7 +108,10 @@ final class AssistantController: ToolContext {
         switch phase {
         case .active:
             if state == .idle || state == .waitingForWakeWord { resumeWakeListening() }
+            local.warmUp(settings: settings)
         case .background:
+            // GPU (MLX) jest w tle niedostępne – zwalniamy pamięć, żeby iOS nie zamknął aplikacji.
+            MLXEngine.shared.unload()
             // Nasłuch w tle działa dzięki trybowi „audio” (pomarańczowa kropka w pasku stanu).
             if !settings.listenInBackground && !isCarPlayConnected && !state.isBusy {
                 listener.stop()
@@ -109,7 +123,7 @@ final class AssistantController: ToolContext {
     }
 
     func bootstrap() async {
-        guard KeychainStore.hasAPIKey, settings.hasCompletedOnboarding else { return }
+        guard settings.hasCompletedOnboarding else { return }
         let micGranted = AudioSessionController.recordPermissionGranted ? true : await AudioSessionController.requestRecordPermission()
         let speechGranted = SpeechListener.isAuthorized ? true : await SpeechListener.requestAuthorization()
         guard micGranted, speechGranted else {
@@ -170,6 +184,7 @@ final class AssistantController: ToolContext {
 
     func clearConversation() {
         agent.reset()
+        claudeFollowUpUntil = .distantPast
         transcript.removeAll()
     }
 
@@ -215,14 +230,53 @@ final class AssistantController: ToolContext {
             guard let self else { return }
             var followUp = false
             do {
+                // 1) Model na telefonie (tryb hybrydowy/lokalny).
+                if self.settings.aiMode != .cloud, !self.awaitingClaudeFollowUp,
+                   let engine = self.local.engine(settings: self.settings, isForeground: self.isAppInForeground) {
+                    self.state = .thinking(activity: "\(engine.displayName)…")
+                    let outcome = await self.local.handle(text, engine: engine, context: self) { spoken in
+                        self.append(.assistant, spoken)
+                        self.state = .speaking
+                        await self.speech.speak(spoken, settings: self.settings)
+                    }
+                    try Task.checkCancellation()
+                    if case .handled(let reply) = outcome {
+                        self.lastEngine = engine.displayName
+                        if !reply.isEmpty {
+                            self.append(.assistant, reply)
+                            self.state = .speaking
+                            await self.speech.speak(reply, settings: self.settings)
+                        }
+                        self.finishTurn(followUp: false)
+                        return
+                    }
+                    if case .delegate(let reason) = outcome, self.settings.aiMode == .local {
+                        self.append(.system, reason)
+                    }
+                }
+
+                // 2) Claude.
+                guard self.settings.aiMode != .local else {
+                    let message = self.local.engine(settings: self.settings, isForeground: self.isAppInForeground) == nil
+                        ? "Model na telefonie nie jest gotowy. Pobierz go w ustawieniach albo włącz tryb hybrydowy."
+                        : "Tego nie potrafię zrobić bez Claude. Spróbuj prościej albo włącz tryb hybrydowy."
+                    self.append(.assistant, message)
+                    self.state = .speaking
+                    await self.speech.speak(message, settings: self.settings)
+                    self.finishTurn(followUp: false)
+                    return
+                }
+                self.state = .thinking(activity: nil)
                 let reply = try await self.agent.send(text, settings: self.settings, context: self, inCar: self.isCarPlayConnected)
                 try Task.checkCancellation()
+                self.lastEngine = self.settings.model.displayName
                 if !reply.text.isEmpty {
                     self.append(.assistant, reply.text)
                     self.state = .speaking
                     await self.speech.speak(reply.text, settings: self.settings)
                 }
                 followUp = reply.expectsFollowUp
+                self.claudeFollowUpUntil = reply.expectsFollowUp ? .now.addingTimeInterval(ConversationAgent.sessionTimeout) : .distantPast
             } catch is CancellationError {
                 return
             } catch let error as AnthropicError {
@@ -235,12 +289,16 @@ final class AssistantController: ToolContext {
                 await self.speech.speak("Coś poszło nie tak. Spróbuj jeszcze raz.", settings: self.settings)
             }
             guard !Task.isCancelled else { return }
-            self.state = .idle
-            if followUp {
-                self.startListeningManually()
-            } else {
-                self.resumeWakeListening()
-            }
+            self.finishTurn(followUp: followUp)
+        }
+    }
+
+    private func finishTurn(followUp: Bool) {
+        state = .idle
+        if followUp {
+            startListeningManually()
+        } else {
+            resumeWakeListening()
         }
     }
 

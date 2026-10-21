@@ -20,6 +20,12 @@ struct AssistantView: View {
                     .contentTransition(.opacity)
                     .animation(.easeInOut(duration: 0.2), value: controller.state.title)
 
+                if let engine = controller.lastEngine {
+                    Label(engine, systemImage: engine.hasPrefix("Claude") ? "cloud" : "iphone")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Button {
                     if controller.state.isBusy { controller.cancelCurrentTurn() } else { controller.startListeningManually() }
                 } label: {

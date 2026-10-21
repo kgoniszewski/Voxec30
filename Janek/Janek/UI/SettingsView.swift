@@ -34,7 +34,15 @@ struct SettingsView: View {
                 Text("Za korzystanie z modelu płacisz bezpośrednio Anthropic, według ich cennika. Klucz jest przechowywany tylko w pęku kluczy tego urządzenia.")
             }
 
-            Section("Model") {
+            Section("Model na telefonie") {
+                NavigationLink {
+                    LocalModelSettingsView()
+                } label: {
+                    LabeledContent("Tryb", value: settings.aiMode.displayName)
+                }
+            }
+
+            Section("Model Claude") {
                 Picker("Model", selection: $settings.model) {
                     ForEach(ClaudeModel.allCases) { model in
                         VStack(alignment: .leading) {
