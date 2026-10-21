@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>pl</string>
+	<key>CFBundleDisplayName</key>
+	<string>Janek</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>pl.janek.assistant</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>janek</string>
+			</array>
+		</dict>
+	</array>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>whatsapp</string>
+		<string>fb-messenger</string>
+		<string>tg</string>
+		<string>sgnl</string>
+		<string>spotify</string>
+		<string>youtube</string>
+		<string>youtubemusic</string>
+		<string>nflx</string>
+		<string>fb</string>
+		<string>instagram</string>
+		<string>snssdk1233</string>
+		<string>twitter</string>
+		<string>comgooglemaps</string>
+		<string>waze</string>
+		<string>uber</string>
+		<string>bolt</string>
+		<string>googlegmail</string>
+		<string>googlechrome</string>
+		<string>msteams</string>
+		<string>ms-outlook</string>
+		<string>zoomus</string>
+		<string>slack</string>
+		<string>allegro</string>
+		<string>mobilet</string>
+		<string>jakdojade</string>
+		<string>revolut</string>
+		<string>olx</string>
+		<string>audible</string>
+		<string>shortcuts</string>
+	</array>
+	<key>NSAlarmKitUsageDescription</key>
+	<string>Janek ustawia budziki, minutniki i przypomnienia o lekach, które dzwonią nawet w trybie cichym.</string>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>Janek włącza i przełącza muzykę na Twoje polecenie.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Janek zapisuje, przesuwa i odwołuje spotkania oraz czyta plan dnia.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Janek otwiera aparat, gdy poprosisz o zrobienie zdjęcia.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Janek znajduje numery i adresy, aby dzwonić, pisać i prowadzić do Twoich znajomych. Numery nie są wysyłane do modelu językowego.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Janek odczytuje kroki, puls i spalone kalorie. Dane zdrowotne nie opuszczają telefonu.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Janek zapisuje rozpoczęte i zakończone treningi w aplikacji Zdrowie.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Janek wyznacza trasy, szuka miejsc w pobliżu i mówi, gdzie jesteś.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Janek słucha frazy „Hej Janek” i Twoich poleceń. Nasłuch frazy działa na urządzeniu.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Janek zapisuje zrobione zdjęcia w Twojej bibliotece.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Janek tworzy i czyta Twoje przypomnienia.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Janek zamienia Twoje polecenia głosowe na tekst – po polsku, na urządzeniu.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<true/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>CPTemplateApplicationSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneClassName</key>
+					<string>CPTemplateApplicationScene</string>
+					<key>UISceneConfigurationName</key>
+					<string>CarPlay</string>
+					<key>UISceneDelegateClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).CarPlaySceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
+</dict>
+</plist>
