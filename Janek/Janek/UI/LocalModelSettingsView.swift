@@ -39,6 +39,9 @@ struct LocalModelSettingsView: View {
             Section {
                 ForEach(LocalModelPreset.allCases) { preset in
                     ModelRow(preset: preset, state: mlx.state(of: preset), isSelected: settings.localModel == preset) {
+                        guard settings.localModel != preset else { return }
+                        // Zwolnij poprzedni model od razu – dwa modele naraz nie zmieszczą się w pamięci.
+                        MLXEngine.shared.unload()
                         settings.localModel = preset
                     }
                 }

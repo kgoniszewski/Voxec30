@@ -1,7 +1,9 @@
 import Foundation
 import Observation
+import os
 #if canImport(MLXLLM)
 import HuggingFace
+import MLX
 import MLXHuggingFace
 import MLXLLM
 import MLXLMCommon
@@ -134,10 +136,30 @@ final class MLXEngine {
 
     // MARK: Wczytywanie i generowanie
 
-    /// Zwalnia pamięć (ostrzeżenie o pamięci, zmiana modelu, przejście w tło na dłużej).
+    #if canImport(MLXLLM)
+    /// Trwające wczytywanie – kolejne wywołania czekają na nie zamiast wczytywać model drugi raz.
+    @ObservationIgnored private var loadingTask: Task<MLXLMCommon.ModelContainer, Error>?
+    @ObservationIgnored private var loadingPreset: LocalModelPreset?
+    #endif
+
+    /// Pamięć podręczna buforów MLX domyślnie może zająć tyle, ile cały limit pamięci.
+    /// Wtedy wagi zwolnionego modelu (2–4 GB) zostają w niej i nowy model wczytuje się
+    /// obok nich – iOS zamyka aplikację z braku pamięci. Mały limit + czyszczenie przy zmianie.
+    private static let configureMemoryOnce: Void = {
+        #if canImport(MLXLLM)
+        MLX.Memory.cacheLimit = 64 * 1024 * 1024
+        #endif
+    }()
+
+    /// Zwalnia pamięć (ostrzeżenie o pamięci, zmiana modelu, przejście w tło).
     func unload() {
         #if canImport(MLXLLM)
+        loadingTask?.cancel()
+        loadingTask = nil
+        if let loadingPreset, isDownloaded(loadingPreset) { states[loadingPreset] = .downloaded }
+        loadingPreset = nil
         container = nil
+        MLX.Memory.clearCache()
         #endif
         if let loadedPreset, isDownloaded(loadedPreset) { states[loadedPreset] = .downloaded }
         loadedPreset = nil
@@ -145,27 +167,79 @@ final class MLXEngine {
 
     func prepare(_ preset: LocalModelPreset) async throws {
         #if canImport(MLXLLM)
-        if loadedPreset == preset, container != nil { return }
-        guard let directory = directory(for: preset) else { throw ToolError.unavailable("model \(preset.displayName) nie jest pobrany") }
-        unload()
-        states[preset] = .loading
-        do {
-            container = try await LLMModelFactory.shared.loadContainer(from: directory, using: #huggingFaceTokenizerLoader())
-            loadedPreset = preset
-            states[preset] = .ready
-        } catch {
-            states[preset] = .failed(error.localizedDescription)
-            throw error
-        }
+        _ = try await loadedContainer(for: preset)
         #else
         throw ToolError.unavailable("MLX")
         #endif
     }
 
+    #if canImport(MLXLLM)
+    /// Zwraca wczytany model, w razie potrzeby zwalniając poprzedni. Wczytywania są szeregowane.
+    private func loadedContainer(for preset: LocalModelPreset) async throws -> MLXLMCommon.ModelContainer {
+        _ = Self.configureMemoryOnce
+        if loadedPreset == preset, let container { return container }
+        if loadingPreset == preset, let loadingTask { return try await loadingTask.value }
+
+        guard let directory = directory(for: preset) else {
+            throw ToolError.unavailable("model \(preset.displayName) nie jest pobrany")
+        }
+        // Najpierw zwolnij poprzedni model (i jego bufory), dopiero potem wczytuj nowy.
+        unload()
+        try Self.checkAvailableMemory(for: directory, preset: preset)
+
+        states[preset] = .loading
+        loadingPreset = preset
+        let task = Task {
+            try await LLMModelFactory.shared.loadContainer(from: directory, using: #huggingFaceTokenizerLoader())
+        }
+        loadingTask = task
+        do {
+            let loaded = try await task.value
+            // W międzyczasie wybrano inny model albo zwolniono pamięć – nie zapisuj tego.
+            guard loadingPreset == preset else {
+                MLX.Memory.clearCache()
+                throw CancellationError()
+            }
+            container = loaded
+            loadedPreset = preset
+            loadingTask = nil
+            loadingPreset = nil
+            states[preset] = .ready
+            return loaded
+        } catch {
+            if loadingPreset == preset {
+                loadingTask = nil
+                loadingPreset = nil
+                states[preset] = error is CancellationError ? .downloaded : .failed(error.localizedDescription)
+            }
+            throw error
+        }
+    }
+
+    /// Wagi modelu na dysku – przybliżenie pamięci potrzebnej do wczytania.
+    private static func weightsSize(in directory: URL) -> Int64 {
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey])) ?? []
+        return files
+            .filter { $0.pathExtension == "safetensors" }
+            .reduce(Int64(0)) { sum, url in sum + Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
+    }
+
+    /// Zamiast dać się zamknąć przez iOS, sprawdź, czy model zmieści się w pamięci aplikacji.
+    private static func checkAvailableMemory(for directory: URL, preset: LocalModelPreset) throws {
+        let available = Int64(os_proc_available_memory())
+        let needed = weightsSize(in: directory) + 600 * 1024 * 1024 // + bufory obliczeń i pamięć podręczna rozmowy
+        guard available > 0, needed > available else { return }
+        let gb = { (bytes: Int64) in String(format: "%.1f", Double(bytes) / 1_073_741_824).replacingOccurrences(of: ".", with: ",") }
+        throw ToolError.unavailable(
+            "pamięć dla modelu \(preset.displayName): potrzeba ok. \(gb(needed)) GB, dostępne \(gb(available)) GB. " +
+            "Wybierz mniejszy model (Qwen3 4B) albo – z płatnym kontem Apple Developer – włącz uprawnienie Increased Memory Limit"
+        )
+    }
+    #endif
+
     func decide(_ command: String, preset: LocalModelPreset) async throws -> LocalDecision? {
         #if canImport(MLXLLM)
-        try await prepare(preset)
-        guard let container else { return nil }
+        let container = try await loadedContainer(for: preset)
         let input = UserInput(
             chat: [.system(LocalCommandRouter.instructions()), .user(command)],
             tools: nil,
