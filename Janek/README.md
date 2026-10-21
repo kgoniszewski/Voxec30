@@ -194,24 +194,37 @@ Bez uprawnienia aplikacja działa normalnie na iPhonie, a scena CarPlay po prost
 
 **Silniki lokalne**
 
-* **Apple Intelligence** (framework Foundation Models) — wbudowany w iOS, generowanie z wymuszoną
-  strukturą (`@Generable`, nazwa narzędzia ograniczona do znanych wartości). Gdy iOS zgłosi
+* **Apple Intelligence** (framework Foundation Models) — wbudowany w iOS. Gdy iOS zgłosi
   obsługę polskiego (`supportsLocale(pl_PL)`), tryb automatyczny wybierze go sam.
 * **MLX** — modele open source pobierane z Hugging Face w aplikacji:
-  * **Qwen3 4B** (`mlx-community/Qwen3-4B-4bit`, ≈2,3 GB) — domyślny, najpewniejszy JSON,
-  * **Bielik 4.5B v3** (`futurist-ai/Bielik-4.5B-v3.0-Instruct-MLX-4bit`, ≈3 GB) — polski model SpeakLeash,
-  * **Gemma 3n E4B** (`mlx-community/gemma-3n-E4B-it-lm-4bit`, ≈3,9 GB).
+  * **Gemma 4 E2B** (≈3,6 GB) — domyślny, szybki,
+  * **Gemma 4 E4B** (≈5,2 GB) — najlepszy polski z listy, wymaga *Increased Memory Limit*,
+  * **Qwen3 4B Instruct 2507** (≈2,3 GB) — najmniejszy,
+  * **Qwen3.5 9B** (≈6 GB) — najmocniejszy i najwolniejszy, wymaga *Increased Memory Limit*,
+  * starsze: Qwen3 4B, Bielik 4.5B v3, Gemma 3n E4B.
 
-**Co obsługuje model lokalny** (`LocalCommandRouter.specs`): minutniki, budziki, muzykę, połączenia,
-wiadomości, notatki, przypomnienia, nowe wydarzenia w kalendarzu, nawigację, kontakty, zdrowie,
-trening, aplikacje i skróty. Przesuwanie/odwoływanie spotkań, plan dnia, pytania ogólne i
-rozmowa zawsze idą do Claude.
+  Przy każdym modelu aplikacja pokazuje, czy zmieści się w pamięci.
 
-**Jak to działa:** mały model dostaje zwięzły prompt (lista 18 narzędzi, tabela najbliższych dni z
-datami, przykłady) i zwraca jeden obiekt JSON `{"tool": …, "args": …}`. Aplikacja go
-**waliduje** (znane narzędzie, wymagane argumenty, poprawne daty w przyszłości, sensowne wartości) —
-każda wątpliwość oznacza przekazanie do Claude. Potwierdzenie głosowe („Minutnik na 10 minut.”)
-powstaje z szablonu z poprawną polską odmianą, a nie z modelu.
+**Co obsługuje model lokalny**: plan dnia, nowe wydarzenia, przypomnienia, budziki, minutniki,
+muzykę, połączenia, wiadomości, notatki, nawigację, kontakty, zdrowie, trening, aplikacje i skróty.
+Przesuwanie/odwoływanie spotkań, pytania ogólne i rozmowa zawsze idą do Claude.
+
+**Jak to działa** (`AI/Local/`):
+
+1. **Reguły bez modelu** — pytania o kalendarz („czy mam dziś…”, „co mam jutro”) od razu czytają
+   plan dnia z kalendarza, bez modelu.
+2. **Model** wybiera akcję i wypełnia proste pola (tytuł, osoba, dzień, wariant). Generowanie jest
+   **ograniczone schematem** (`GeneratedCommand`, `@Generable`): Apple Intelligence bezpośrednio, a modele
+   MLX przez `MLXFoundationModels` (SDK iOS 27) — model nie może zwrócić niepoprawnej struktury.
+3. **Kod** liczy daty i godziny z samej transkrypcji (`PolishTimeParser`: „o dwudziestej pierwszej”,
+   „wpół do ósmej”, „kwadrans po”, „jutro wieczorem”, „w przyszły wtorek”, „na pół godziny”; odporny
+   na literówki rozpoznawania mowy) i **sprawdza** decyzję: pytanie nigdy nie tworzy wydarzeń ani nie
+   wysyła wiadomości, a każda akcja wymaga pasującego słowa w poleceniu („dodaj”, „napisz”, „zadzwoń”…).
+   Wątpliwości → Claude.
+4. Potwierdzenie głosowe powstaje z szablonu z poprawną polską odmianą.
+
+**Test modelu** (*Ustawienia → Model na telefonie → Test modelu*) pokazuje, jak model zrozumiał
+polecenie (akcja, argumenty, czas), bez wykonywania czegokolwiek.
 
 **Ograniczenia**
 

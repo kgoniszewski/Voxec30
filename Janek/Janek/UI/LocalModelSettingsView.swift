@@ -37,21 +37,32 @@ struct LocalModelSettingsView: View {
             }
 
             Section {
-                ForEach(LocalModelPreset.allCases) { preset in
-                    ModelRow(preset: preset, state: mlx.state(of: preset), isSelected: settings.localModel == preset) {
-                        guard settings.localModel != preset else { return }
-                        // Zwolnij poprzedni model od razu – dwa modele naraz nie zmieszczą się w pamięci.
-                        MLXEngine.shared.unload()
-                        settings.localModel = preset
-                    }
+                NavigationLink {
+                    LocalModelTestView()
+                } label: {
+                    Label("Test modelu", systemImage: "testtube.2")
+                }
+            } footer: {
+                Text("Sprawdź, jak model rozumie Twoje polecenia – bez wykonywania żadnych akcji.")
+            }
+
+            Section {
+                ForEach(LocalModelPreset.allCases.filter { !$0.isLegacy }) { preset in
+                    modelRow(preset)
                 }
             } header: {
                 Text("Modele do pobrania (MLX)")
             } footer: {
                 if MLXEngine.isSupported {
-                    Text("Modele pobierają się z Hugging Face (najlepiej przez Wi-Fi) i zajmują miejsce na telefonie. Wybierz model dotknięciem.")
+                    Text("Modele pobierają się z Hugging Face (najlepiej przez Wi-Fi) i zajmują miejsce na telefonie. Wybierz model dotknięciem. \(MLXEngine.usesGuidedGeneration ? "Odpowiedzi modelu są ograniczone do poprawnej struktury (Foundation Models)." : "")")
                 } else {
                     Text("Modele MLX działają tylko na fizycznym iPhonie.")
+                }
+            }
+
+            Section("Starsze modele") {
+                ForEach(LocalModelPreset.allCases.filter(\.isLegacy)) { preset in
+                    modelRow(preset)
                 }
             }
         }
@@ -60,10 +71,23 @@ struct LocalModelSettingsView: View {
     }
 }
 
+extension LocalModelSettingsView {
+    fileprivate func modelRow(_ preset: LocalModelPreset) -> some View {
+        ModelRow(preset: preset, state: mlx.state(of: preset), isSelected: settings.localModel == preset,
+                 fits: MLXEngine.isSupported ? mlx.fitsInMemory(preset) : nil) {
+            guard settings.localModel != preset else { return }
+            // Zwolnij poprzedni model od razu – dwa modele naraz nie zmieszczą się w pamięci.
+            MLXEngine.shared.unload()
+            settings.localModel = preset
+        }
+    }
+}
+
 private struct ModelRow: View {
     let preset: LocalModelPreset
     let state: MLXEngine.State
     let isSelected: Bool
+    let fits: Bool?
     let select: () -> Void
 
     var body: some View {
@@ -77,6 +101,10 @@ private struct ModelRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(preset.displayName)
                 Text(preset.details).font(.caption).foregroundStyle(.secondary)
+                if fits == false {
+                    Label("Może się nie zmieścić w pamięci tej aplikacji", systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.orange)
+                }
                 switch state {
                 case .downloading(let fraction):
                     ProgressView(value: fraction)

@@ -206,3 +206,52 @@ struct ListRemindersTool: AssistantTool {
         return .ok(lines.isEmpty ? "Brak niewykonanych przypomnień." : lines.joined(separator: "\n"))
     }
 }
+
+/// Plan dnia czytany na głos lokalnie (tryb lokalny: nazwy wydarzeń nie trafiają do żadnego modelu).
+struct CalendarAgendaTool: AssistantTool {
+    let name = "calendar_agenda"
+    let description = "Czyta na głos wydarzenia z kalendarza w podanym przedziale (domyślnie dziś)."
+    var inputSchema: JSONValue {
+        JSONSchema.object([
+            "start": JSONSchema.string("Początek przedziału, ISO 8601"),
+            "end": JSONSchema.string("Koniec przedziału, ISO 8601"),
+        ])
+    }
+
+    func run(_ input: JSONValue, context: ToolContext) async throws -> ToolOutput {
+        let provider = EventStoreProvider.shared
+        try await provider.requireEvents()
+        let calendar = Calendar.current
+        let start = input.optionalDate("start") ?? calendar.startOfDay(for: .now)
+        let end = input.optionalDate("end") ?? calendar.date(byAdding: .day, value: 1, to: start)!
+        let events = provider.store.events(matching: provider.store.predicateForEvents(withStart: start, end: end, calendars: nil))
+            .sorted { $0.startDate < $1.startDate }
+        let dayLabel = Self.dayLabel(for: start, calendar: calendar)
+        guard !events.isEmpty else {
+            return .privateReadout("\(dayLabel) nie masz żadnych wydarzeń w kalendarzu.",
+                                   summaryForModel: "Przeczytano użytkownikowi plan dnia (brak wydarzeń).")
+        }
+        let time = DateFormatter()
+        time.locale = Locale(identifier: "pl_PL")
+        time.dateFormat = "H:mm"
+        let items = events.prefix(8).map { event -> String in
+            let title = event.title ?? "bez tytułu"
+            return event.isAllDay ? "\(title) przez cały dzień" : "o \(time.string(from: event.startDate)) \(title)"
+        }
+        let count = LocalCommandRouter.plural(events.count, "wydarzenie", "wydarzenia", "wydarzeń")
+        let more = events.count > 8 ? " i kolejne." : "."
+        return .privateReadout("\(dayLabel) masz \(count): \(items.joined(separator: ", "))\(more)",
+                               summaryForModel: "Przeczytano użytkownikowi plan dnia (\(events.count) wydarzeń).")
+    }
+
+    static func dayLabel(for date: Date, calendar: Calendar) -> String {
+        if calendar.isDateInToday(date) { return "Dziś" }
+        if calendar.isDateInTomorrow(date) { return "Jutro" }
+        if calendar.isDateInYesterday(date) { return "Wczoraj" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "pl_PL")
+        formatter.dateFormat = "EEEE, d MMMM,"
+        let text = formatter.string(from: date)
+        return text.prefix(1).uppercased() + text.dropFirst()
+    }
+}

@@ -75,29 +75,65 @@ final class LocalAssistant {
         }
     }
 
-    func handle(_ command: String, engine: Engine, context: ToolContext,
-                onLocalSpeech: (String) async -> Void) async -> Outcome {
-        let raw: LocalDecision?
+    /// Wynik analizy polecenia (bez wykonywania) – także dla ekranu „Test modelu”.
+    struct Analysis: Sendable {
+        var fields: CommandFields?
+        var route: LocalCommandRouter.Route
+        var usedModel: Bool
+        var duration: Duration
+    }
+
+    func analyze(_ command: String, engine: Engine?) async -> Analysis {
+        let clock = ContinuousClock()
+        let start = clock.now
+        // 1) Reguły bez modelu: pytania o kalendarz nigdy nie trafiają do modelu (szybciej, bez pomyłek).
+        if let route = LocalCommandRouter.preRoute(command) {
+            return Analysis(fields: nil, route: route, usedModel: false, duration: clock.now - start)
+        }
+        guard let engine else {
+            return Analysis(fields: nil, route: .delegate("brak gotowego modelu na telefonie"), usedModel: false, duration: clock.now - start)
+        }
+        // 2) Model: wybiera akcję i wypełnia pola tekstowe.
+        let fields: CommandFields?
         do {
-            raw = try await withTimeout(Self.timeout) { () async throws -> LocalDecision? in
+            fields = try await withTimeout(Self.timeout) { () async throws -> CommandFields? in
                 switch engine {
                 case .apple: return try await AppleFoundationEngine.decide(command)
                 case .mlx(let preset): return try await MLXEngine.shared.decide(command, preset: preset)
                 }
             }
         } catch {
-            return .delegate(reason: "błąd modelu lokalnego: \(error.localizedDescription)")
+            return Analysis(fields: nil, route: .delegate("błąd modelu lokalnego: \(error.localizedDescription)"),
+                            usedModel: true, duration: clock.now - start)
         }
-        guard let raw, let decision = LocalCommandRouter.validate(raw) else {
-            return .delegate(reason: "niepewna odpowiedź modelu lokalnego")
+        guard let fields else {
+            return Analysis(fields: nil, route: .delegate("model lokalny nie zwrócił polecenia"), usedModel: true, duration: clock.now - start)
         }
-        if decision.isDelegate { return .delegate(reason: "model lokalny przekazał polecenie") }
+        // 3) Kontrola i daty/godziny liczone kodem z transkrypcji.
+        return Analysis(fields: fields, route: LocalCommandRouter.route(fields, transcript: command),
+                        usedModel: true, duration: clock.now - start)
+    }
 
-        let output = await registry.run(name: decision.tool, input: decision.args, context: context)
+    func handle(_ command: String, engine: Engine?, context: ToolContext,
+                onLocalSpeech: (String) async -> Void) async -> Outcome {
+        let analysis = await analyze(command, engine: engine)
+        guard case .run(let decision) = analysis.route else {
+            if case .delegate(let reason) = analysis.route { return .delegate(reason: reason) }
+            return .delegate(reason: "nieznany wynik")
+        }
+        let output: ToolOutput
+        if let tool = localTools[decision.tool] {
+            do { output = try await tool.run(decision.args, context: context) } catch { output = .error(error.localizedDescription) }
+        } else {
+            output = await registry.run(name: decision.tool, input: decision.args, context: context)
+        }
         if output.isError { return .delegate(reason: output.modelText) }
         if let local = output.spokenLocally { await onLocalSpeech(local) }
         return .handled(reply: LocalCommandRouter.confirmation(for: decision, output: output))
     }
+
+    /// Narzędzia dostępne tylko w trybie lokalnym.
+    private let localTools: [String: any AssistantTool] = ["calendar_agenda": CalendarAgendaTool()]
 
     /// Wczytuje model MLX z wyprzedzeniem, by pierwsze polecenie nie czekało na załadowanie.
     func warmUp(settings: AppSettings) {

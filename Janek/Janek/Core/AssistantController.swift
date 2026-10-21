@@ -171,6 +171,16 @@ final class AssistantController: ToolContext {
         }
     }
 
+    // MARK: Model lokalny – test
+
+    func localEngineForTesting() -> LocalAssistant.Engine? {
+        local.engine(settings: settings, isForeground: true)
+    }
+
+    func analyzeLocally(_ command: String, engine: LocalAssistant.Engine) async -> LocalAssistant.Analysis {
+        await local.analyze(command, engine: engine)
+    }
+
     // MARK: Akcje użytkownika
 
     /// Przycisk mikrofonu / Action Button / skrót – słuchaj polecenia bez frazy.
@@ -261,9 +271,11 @@ final class AssistantController: ToolContext {
             var followUp = false
             do {
                 // 1) Model na telefonie (tryb hybrydowy/lokalny).
+                let engine = self.local.engine(settings: self.settings, isForeground: self.isAppInForeground)
+                // Pytania o kalendarz obsługują same reguły – działają nawet bez pobranego modelu.
                 if self.settings.aiMode != .cloud, !self.awaitingClaudeFollowUp,
-                   let engine = self.local.engine(settings: self.settings, isForeground: self.isAppInForeground) {
-                    self.state = .thinking(activity: "\(engine.displayName)…")
+                   engine != nil || LocalCommandRouter.preRoute(text) != nil {
+                    self.state = .thinking(activity: "\(engine?.displayName ?? "Na telefonie")…")
                     let outcome = await self.local.handle(text, engine: engine, context: self) { spoken in
                         self.append(.assistant, spoken)
                         self.state = .speaking
@@ -271,7 +283,7 @@ final class AssistantController: ToolContext {
                     }
                     try Task.checkCancellation()
                     if case .handled(let reply) = outcome {
-                        self.lastEngine = engine.displayName
+                        self.lastEngine = engine?.displayName ?? "Na telefonie"
                         if !reply.isEmpty {
                             self.append(.assistant, reply)
                             self.state = .speaking

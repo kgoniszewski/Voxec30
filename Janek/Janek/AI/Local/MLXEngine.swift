@@ -9,9 +9,18 @@ import MLXLLM
 import MLXLMCommon
 import Tokenizers
 #endif
+#if canImport(MLXFoundationModels) && canImport(FoundationModels, _version: 2)
+import FoundationModels
+import MLXFoundationModels
+#endif
 
 /// Modele open source pobierane z Hugging Face i uruchamiane przez MLX na GPU iPhone'a.
 enum LocalModelPreset: String, CaseIterable, Identifiable, Sendable {
+    case gemma4_e2b = "mlx-community/gemma-4-e2b-it-4bit"
+    case gemma4_e4b = "mlx-community/gemma-4-e4b-it-4bit"
+    case qwen3_4b_2507 = "mlx-community/Qwen3-4B-Instruct-2507-4bit"
+    case qwen35_9b = "mlx-community/Qwen3.5-9B-4bit"
+    // Starsze modele (zostają dla osób, które już je pobrały).
     case qwen3_4b = "mlx-community/Qwen3-4B-4bit"
     case bielik_4_5b = "futurist-ai/Bielik-4.5B-v3.0-Instruct-MLX-4bit"
     case gemma3n_e4b = "mlx-community/gemma-3n-E4B-it-lm-4bit"
@@ -20,19 +29,42 @@ enum LocalModelPreset: String, CaseIterable, Identifiable, Sendable {
 
     var displayName: String {
         switch self {
+        case .gemma4_e2b: "Gemma 4 E2B"
+        case .gemma4_e4b: "Gemma 4 E4B"
+        case .qwen3_4b_2507: "Qwen3 4B Instruct 2507"
+        case .qwen35_9b: "Qwen3.5 9B"
         case .qwen3_4b: "Qwen3 4B"
-        case .bielik_4_5b: "Bielik 4.5B v3 (polski)"
+        case .bielik_4_5b: "Bielik 4.5B v3"
         case .gemma3n_e4b: "Gemma 3n E4B"
         }
     }
 
     var details: String {
         switch self {
-        case .qwen3_4b: "≈2,3 GB · najpewniej zwraca poprawny JSON · Apache 2.0"
-        case .bielik_4_5b: "≈3 GB · najlepszy polski (SpeakLeash) · Apache 2.0"
-        case .gemma3n_e4b: "≈3,9 GB · Google · licencja Gemma"
+        case .gemma4_e2b: "≈3,6 GB · Google, 140+ języków, wywoływanie funkcji · szybki"
+        case .gemma4_e4b: "≈5,2 GB · Google, najlepszy polski z tej listy · wymaga Increased Memory Limit"
+        case .qwen3_4b_2507: "≈2,3 GB · następca Qwen3 4B, lepiej wykonuje polecenia · najmniejszy"
+        case .qwen35_9b: "≈6 GB · najmocniejszy, ale najwolniejszy · wymaga Increased Memory Limit"
+        case .qwen3_4b: "≈2,3 GB · starszy"
+        case .bielik_4_5b: "≈3 GB · polski model SpeakLeash · starszy"
+        case .gemma3n_e4b: "≈3,9 GB · starszy"
         }
     }
+
+    /// Przybliżony rozmiar wag (do oceny, czy model zmieści się w pamięci, jeszcze przed pobraniem).
+    var approximateBytes: Int64 {
+        let gb: Double = switch self {
+        case .gemma4_e2b: 3.55
+        case .gemma4_e4b: 5.15
+        case .qwen3_4b_2507, .qwen3_4b: 2.26
+        case .qwen35_9b: 5.95
+        case .bielik_4_5b: 3.0
+        case .gemma3n_e4b: 3.86
+        }
+        return Int64(gb * 1_073_741_824)
+    }
+
+    var isLegacy: Bool { [.qwen3_4b, .bielik_4_5b, .gemma3n_e4b].contains(self) }
 }
 
 @MainActor
@@ -56,6 +88,30 @@ final class MLXEngine {
     @ObservationIgnored private var container: MLXLMCommon.ModelContainer?
     #endif
     @ObservationIgnored private var loadedPreset: LocalModelPreset?
+    @ObservationIgnored private let logger = Logger(subsystem: "pl.janek.assistant", category: "mlx")
+    #if canImport(MLXFoundationModels) && canImport(FoundationModels, _version: 2)
+    /// Model MLX widziany przez API Foundation Models (generowanie ograniczone schematem `GeneratedCommand`).
+    @ObservationIgnored private var languageModel: MLXLanguageModel?
+    #endif
+
+    /// Czy model zmieści się w pamięci aplikacji (wagi + ok. 0,6 GB na obliczenia).
+    func fitsInMemory(_ preset: LocalModelPreset) -> Bool? {
+        let available = Int64(os_proc_available_memory())
+        guard available > 0 else { return nil }
+        let alreadyUsed = loadedPreset.map { $0.approximateBytes } ?? 0
+        return preset.approximateBytes + Self.workingMemory <= available + alreadyUsed
+    }
+
+    static let workingMemory: Int64 = 600 * 1024 * 1024
+
+    /// Czy dostępne jest generowanie z wymuszoną strukturą (MLX przez Foundation Models, SDK iOS 27).
+    static var usesGuidedGeneration: Bool {
+        #if canImport(MLXFoundationModels) && canImport(FoundationModels, _version: 2)
+        return true
+        #else
+        return false
+        #endif
+    }
 
     static var isSupported: Bool {
         #if canImport(MLXLLM) && !targetEnvironment(simulator)
@@ -161,6 +217,13 @@ final class MLXEngine {
         container = nil
         MLX.Memory.clearCache()
         #endif
+        #if canImport(MLXFoundationModels) && canImport(FoundationModels, _version: 2)
+        // Adapter trzyma własną kopię referencji do wag – zwolnij ją także.
+        if languageModel != nil {
+            languageModel = nil
+            Task { await MLXLanguageModel.evictAll(); MLX.Memory.clearCache() }
+        }
+        #endif
         if let loadedPreset, isDownloaded(loadedPreset) { states[loadedPreset] = .downloaded }
         loadedPreset = nil
     }
@@ -185,6 +248,10 @@ final class MLXEngine {
         }
         // Najpierw zwolnij poprzedni model (i jego bufory), dopiero potem wczytuj nowy.
         unload()
+        #if canImport(MLXFoundationModels) && canImport(FoundationModels, _version: 2)
+        await MLXLanguageModel.evictAll()
+        MLX.Memory.clearCache()
+        #endif
         try Self.checkAvailableMemory(for: directory, preset: preset)
 
         states[preset] = .loading
@@ -227,19 +294,61 @@ final class MLXEngine {
     /// Zamiast dać się zamknąć przez iOS, sprawdź, czy model zmieści się w pamięci aplikacji.
     private static func checkAvailableMemory(for directory: URL, preset: LocalModelPreset) throws {
         let available = Int64(os_proc_available_memory())
-        let needed = weightsSize(in: directory) + 600 * 1024 * 1024 // + bufory obliczeń i pamięć podręczna rozmowy
+        let needed = weightsSize(in: directory) + workingMemory // + bufory obliczeń i pamięć podręczna rozmowy
         guard available > 0, needed > available else { return }
         let gb = { (bytes: Int64) in String(format: "%.1f", Double(bytes) / 1_073_741_824).replacingOccurrences(of: ".", with: ",") }
         throw ToolError.unavailable(
             "pamięć dla modelu \(preset.displayName): potrzeba ok. \(gb(needed)) GB, dostępne \(gb(available)) GB. " +
-            "Wybierz mniejszy model (Qwen3 4B) albo – z płatnym kontem Apple Developer – włącz uprawnienie Increased Memory Limit"
+            "Wybierz mniejszy model (np. Qwen3 4B Instruct 2507) albo – z płatnym kontem Apple Developer – włącz uprawnienie Increased Memory Limit"
         )
     }
     #endif
 
-    func decide(_ command: String, preset: LocalModelPreset) async throws -> LocalDecision? {
+    /// Rozkłada polecenie na pola. Najpierw generowanie z wymuszoną strukturą (gdy SDK na to pozwala),
+    /// a w razie błędu – zwykłe generowanie tekstu z odczytaniem JSON.
+    func decide(_ command: String, preset: LocalModelPreset) async throws -> CommandFields? {
         #if canImport(MLXLLM)
         let container = try await loadedContainer(for: preset)
+        #if canImport(MLXFoundationModels) && canImport(FoundationModels, _version: 2)
+        do {
+            let model = guidedModel(for: preset, container: container)
+            let session = LanguageModelSession(model: model) { LocalCommandRouter.instructions() }
+            let response = try await session.respond(
+                to: command,
+                generating: GeneratedCommand.self,
+                options: GenerationOptions(samplingMode: .greedy, temperature: nil, maximumResponseTokens: 300)
+            )
+            return response.content.fields
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            logger.error("Generowanie ze schematem nie powiodło się: \(error.localizedDescription, privacy: .public)")
+        }
+        #endif
+        return try await decideFromText(command, container: container)
+        #else
+        return nil
+        #endif
+    }
+
+    #if canImport(MLXFoundationModels) && canImport(FoundationModels, _version: 2)
+    /// Adapter Foundation Models korzystający z już wczytanego modelu (bez drugiej kopii wag w pamięci).
+    private func guidedModel(for preset: LocalModelPreset, container: MLXLMCommon.ModelContainer) -> MLXLanguageModel {
+        if let languageModel, languageModel.configuration.name == preset.rawValue { return languageModel }
+        let directory = directory(for: preset) ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        let model = MLXLanguageModel(
+            configuration: ModelConfiguration(id: preset.rawValue),
+            capabilities: [.guidedGeneration],
+            weightsLocation: { _ in directory },
+            load: { _, _ in container }
+        )
+        languageModel = model
+        return model
+    }
+    #endif
+
+    #if canImport(MLXLLM)
+    private func decideFromText(_ command: String, container: MLXLMCommon.ModelContainer) async throws -> CommandFields? {
         let input = UserInput(
             chat: [.system(LocalCommandRouter.instructions()), .user(command)],
             tools: nil,
@@ -254,8 +363,6 @@ final class MLXEngine {
             if LocalCommandRouter.firstJSONObject(in: output.components(separatedBy: "</think>").last ?? output) != nil { break }
         }
         return LocalCommandRouter.parse(output)
-        #else
-        return nil
-        #endif
     }
+    #endif
 }

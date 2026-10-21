@@ -52,33 +52,17 @@ enum AppleFoundationEngine {
         status == .ready || status == .polishNotSupported
     }
 
-    static func decide(_ command: String) async throws -> LocalDecision? {
+    static func decide(_ command: String) async throws -> CommandFields? {
         #if canImport(FoundationModels)
         let session = LanguageModelSession(instructions: LocalCommandRouter.instructions())
         let response = try await session.respond(
             to: command,
-            generating: GeneratedDecision.self,
+            generating: GeneratedCommand.self,
             options: GenerationOptions(samplingMode: .greedy, temperature: nil, maximumResponseTokens: 300)
         )
-        return LocalCommandRouter.parse(tool: response.content.tool, argumentsJSON: response.content.argumentsJSON)
+        return response.content.fields
         #else
         return nil
         #endif
     }
 }
-
-#if canImport(FoundationModels)
-/// Struktura generowana przez model Apple – nazwa narzędzia jest ograniczona do znanych wartości.
-@Generable
-struct GeneratedDecision {
-    @Guide(description: "Nazwa narzędzia albo \"claude\", gdy polecenie trzeba przekazać dalej", .anyOf([
-        "timer_start", "alarm_set", "alarm_cancel", "music_control", "music_play", "phone_call", "message_send",
-        "note_create", "note_append", "note_read", "reminder_create", "calendar_create_event", "maps_navigate",
-        "contact_find", "health_read", "workout", "app_open", "shortcut_run", "claude",
-    ]))
-    var tool: String
-
-    @Guide(description: "Argumenty narzędzia jako obiekt JSON, np. {\"seconds\": 300}; dla \"claude\" pusty obiekt {}")
-    var argumentsJSON: String
-}
-#endif

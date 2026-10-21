@@ -13,6 +13,7 @@
 		B10000000000000000000803 /* HuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = B10000000000000000000703 /* HuggingFace */; };
 		B10000000000000000000804 /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = B10000000000000000000704 /* Tokenizers */; };
 		B10000000000000000000805 /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = B10000000000000000000705 /* MLX */; };
+		B10000000000000000000806 /* MLXFoundationModels in Frameworks */ = {isa = PBXBuildFile; productRef = B10000000000000000000706 /* MLXFoundationModels */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -57,6 +58,7 @@
 				B10000000000000000000803 /* HuggingFace in Frameworks */,
 				B10000000000000000000804 /* Tokenizers in Frameworks */,
 				B10000000000000000000805 /* MLX in Frameworks */,
+				B10000000000000000000806 /* MLXFoundationModels in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -125,6 +127,7 @@
 				B10000000000000000000703 /* HuggingFace */,
 				B10000000000000000000704 /* Tokenizers */,
 				B10000000000000000000705 /* MLX */,
+				B10000000000000000000706 /* MLXFoundationModels */,
 			);
 			productName = Janek;
 			productReference = A10000000000000000000011 /* Janek.app */;
@@ -497,6 +500,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = B10000000000000000000904 /* XCRemoteSwiftPackageReference "mlx-swift" */;
 			productName = MLX;
+		};
+		B10000000000000000000706 /* MLXFoundationModels */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B10000000000000000000901 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXFoundationModels;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

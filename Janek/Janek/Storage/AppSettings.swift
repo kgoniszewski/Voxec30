@@ -43,7 +43,7 @@ final class AppSettings {
             "wakeWord": true, "wakeSensitivity": WakeSensitivity.normal.rawValue, "listenInBackground": true,
             "onDevice": true, "speechRate": AVSpeechUtteranceDefaultSpeechRate, "alarmSound": AlarmSound.classic.rawValue,
             "earcons": true, "onboarded": false, "aiMode": AIMode.hybrid.rawValue,
-            "localEngine": LocalEngineChoice.automatic.rawValue, "localModel": LocalModelPreset.qwen3_4b.rawValue,
+            "localEngine": LocalEngineChoice.automatic.rawValue, "localModel": LocalModelPreset.gemma4_e2b.rawValue,
         ])
         model = ClaudeModel(rawValue: defaults.string(forKey: "model") ?? "") ?? .opus
         effort = ClaudeEffort(rawValue: defaults.string(forKey: "effort") ?? "") ?? .low
@@ -59,6 +59,6 @@ final class AppSettings {
         hasCompletedOnboarding = defaults.bool(forKey: "onboarded")
         aiMode = AIMode(rawValue: defaults.string(forKey: "aiMode") ?? "") ?? .hybrid
         localEngine = LocalEngineChoice(rawValue: defaults.string(forKey: "localEngine") ?? "") ?? .automatic
-        localModel = LocalModelPreset(rawValue: defaults.string(forKey: "localModel") ?? "") ?? .qwen3_4b
+        localModel = LocalModelPreset(rawValue: defaults.string(forKey: "localModel") ?? "") ?? .gemma4_e2b
     }
 }
