@@ -54,6 +54,11 @@ final class SpeechListener {
     private(set) var mode: Mode = .idle
     private var detector = WakeWordDetector()
     private var onDevice = true
+    /// Kolejne błędy rozpoznawania bez żadnego wyniku – do wycofywania się zamiast pętli restartów.
+    private var consecutiveErrors = 0
+    /// Stare silniki audio trzymamy przy życiu: zwolnienie silnika wymaga wywołania usługi audio
+    /// systemu, które w symulatorze potrafi przekroczyć limit czasu i zamknąć aplikację.
+    private var retiredEngines: [AVAudioEngine] = []
 
     // Wykrywanie końca polecenia
     private var commandText = ""
@@ -92,6 +97,7 @@ final class SpeechListener {
     private func recreateEngine() {
         if engine.isRunning { engine.stop() }
         engine.inputNode.removeTap(onBus: 0)
+        if retiredEngines.count < 3 { retiredEngines.append(engine) }
         engine = AVAudioEngine()
         observeEngine()
     }
@@ -155,11 +161,13 @@ final class SpeechListener {
         var format = engine.inputNode.outputFormat(forBus: 0)
         // Trasa audio bywa chwilowo w trakcie przebudowy (okno zgody, nowe urządzenie) –
         // kilka prób z nowym silnikiem audio, coraz dłuższe odstępy.
-        for delay in [200, 400, 800] where !Self.isUsable(format) {
+        for (attempt, delay) in [300, 600, 900].enumerated() where !Self.isUsable(format) {
             logger.info("Nieprawidłowy format wejścia: \(Self.inputDiagnostics(format: format), privacy: .public)")
             try? await Task.sleep(for: .milliseconds(delay))
             guard token == startToken else { return }
-            recreateEngine()
+            // Nowy silnik tylko przy ostatniej próbie i najwyżej raz na start – częste
+            // tworzenie/zwalnianie silników obciąża usługę audio systemu.
+            if attempt == 2 { recreateEngine() }
             format = engine.inputNode.outputFormat(forBus: 0)
         }
         // Format 0 Hz / 0 kanałów = brak mikrofonu. installTap rzuciłby wtedy wyjątkiem Obj-C (awaria aplikacji).
@@ -179,6 +187,19 @@ final class SpeechListener {
             throw error
         }
         startTask()
+    }
+
+    static func recognitionFailureMessage(code: Int, onDevice: Bool) -> String {
+        var text = "Rozpoznawanie mowy nie działa (kod \(code))."
+        if onDevice {
+            text += " Model mowy po polsku na urządzeniu jest niedostępny – wyłącz „Rozpoznawanie tylko na urządzeniu” w Ustawieniach Janka (mowa trafi wtedy do serwerów Apple) albo pobierz polski w Dyktowaniu (Ustawienia iOS → Ogólne → Klawiatura)."
+        } else {
+            text += " Sprawdź, czy Dyktowanie jest włączone (Ustawienia iOS → Ogólne → Klawiatura) i czy jest internet."
+        }
+        #if targetEnvironment(simulator)
+        text += " W symulatorze rozpoznawanie mowy bywa niedostępne – najlepiej testować na iPhonie."
+        #endif
+        return text + " Dotknij mikrofonu, by spróbować ponownie."
     }
 
     static func isUsable(_ format: AVAudioFormat) -> Bool {
@@ -246,6 +267,7 @@ final class SpeechListener {
         guard generation == self.generation else { return }
 
         if let result {
+            consecutiveErrors = 0
             let transcript = result.bestTranscription.formattedString
             switch mode {
             case .wakeWord:
@@ -273,11 +295,27 @@ final class SpeechListener {
         } else if let error {
             let nsError = error as NSError
             logger.debug("Błąd rozpoznawania: \(nsError.domain, privacy: .public) \(nsError.code)")
-            // 1110 = brak mowy, 216/301 = anulowanie – w trybie nasłuchu po prostu restartujemy.
+            // 1110 = brak mowy, 216/301 = anulowanie – zwykłe sytuacje, po prostu restartujemy.
+            let benign = nsError.code == 1110 || nsError.code == 216 || nsError.code == 301
+            if !benign { consecutiveErrors += 1 }
+
+            // Powtarzające się błędy (np. 1700 – brak modelu mowy pl-PL na urządzeniu, częste w symulatorze):
+            // przestajemy restartować w kółko i mówimy, co zmienić. Nie przełączamy się sami na serwer
+            // Apple – użytkownik wybrał rozpoznawanie tylko na urządzeniu.
+            if consecutiveErrors >= 4 {
+                let usedOnDevice = onDevice && (recognizer?.supportsOnDeviceRecognition ?? false)
+                stop()
+                consecutiveErrors = 0
+                onEvent?(.error(Self.recognitionFailureMessage(code: nsError.code, onDevice: usedOnDevice)))
+                return
+            }
+
             if mode == .wakeWord {
+                // Wycofywanie się: 0,3 s, potem dłużej przy kolejnych błędach (maks. 5 s).
+                let delay = min(5.0, 0.3 * pow(2.0, Double(max(0, consecutiveErrors - 1))))
                 restartTask?.cancel()
                 restartTask = Task { @MainActor [weak self] in
-                    try? await Task.sleep(for: .milliseconds(300))
+                    try? await Task.sleep(for: .seconds(delay))
                     guard !Task.isCancelled, let self, self.mode == .wakeWord else { return }
                     self.startTask()
                 }
