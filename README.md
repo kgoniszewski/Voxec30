@@ -1,5 +1,8 @@
 # Voxec30 — symulacja Vox AC30 Top Boost dla iPad Pro (M2)
 
+> **W tym repozytorium jest też projekt [`Janek/`](Janek/README.md)** — polski asystent głosowy
+> „Hej Janek” dla iPhone 17 Pro (iOS 27, Xcode 27, SwiftUI + Claude API).
+
 Samodzielna aplikacja (JUCE **Standalone**, bez AU/VST3) dla iPadOS 27, modelująca obwód
 wzmacniacza **Vox AC30 z kanałem Top Boost**: przedwzmacniacz ECC83, pasywny filtr
 Treble/Bass, odwracacz fazy, końcówkę mocy 4×EL84 (push-pull, klasa AB, bias katodowy,

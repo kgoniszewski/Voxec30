@@ -1,0 +1,6 @@
+# Projekt Xcode aplikacji Janek jest wersjonowany (nadpisuje reguły z głównego .gitignore)
+!*.xcodeproj/
+!*.xcworkspace/
+xcuserdata/
+DerivedData/
+build/
