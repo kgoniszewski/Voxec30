@@ -42,7 +42,11 @@ final class SpeechListener {
 
     private let logger = Logger(subsystem: "pl.janek.assistant", category: "speech")
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "pl-PL"))
-    private let engine = AVAudioEngine()
+    /// Silnik audio tworzony dopiero po przełączeniu sesji na nagrywanie (`.playAndRecord`).
+    /// Pierwsze odwołanie do `inputNode` ustala format wejścia – gdyby nastąpiło wcześniej
+    /// (domyślna kategoria bez nagrywania), silnik zapamiętałby 0 Hz na stałe.
+    private var engine: AVAudioEngine?
+    private var tapInstalled = false
     private let router = AudioBufferRouter()
     private var task: SFSpeechRecognitionTask?
     private var generation = 0
@@ -75,17 +79,24 @@ final class SpeechListener {
 
     var supportsOnDevice: Bool { recognizer?.supportsOnDeviceRecognition ?? false }
 
-    init() {
-        observeEngine()
-    }
-
-    /// Zmiana trasy audio (słuchawki, CarPlay, połączenie) zatrzymuje silnik – wznawiamy nasłuch.
-    private func observeEngine() {
+    /// Zwraca silnik, tworząc go przy pierwszym użyciu (po aktywacji sesji audio).
+    private func audioEngine() -> AVAudioEngine {
+        if let engine { return engine }
+        let engine = AVAudioEngine()
+        self.engine = engine
+        // Zmiana trasy audio (słuchawki, CarPlay, połączenie) zatrzymuje silnik – wznawiamy nasłuch.
         configurationObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.restartAfterConfigurationChange() }
         }
+        return engine
+    }
+
+    /// Czy sesja audio ma już działające wejście (bez dotykania silnika).
+    private static var sessionInputReady: Bool {
+        let session = AVAudioSession.sharedInstance()
+        return session.isInputAvailable && session.sampleRate > 0 && session.inputNumberOfChannels > 0
     }
 
     /// Opis stanu wejścia audio do komunikatu błędu i logów.
@@ -120,8 +131,11 @@ final class SpeechListener {
         endpointTimer = nil
         restartTask?.cancel()
         finishTask()
-        if engine.isRunning { engine.stop() }
-        engine.inputNode.removeTap(onBus: 0)
+        if let engine {
+            if engine.isRunning { engine.stop() }
+            if tapInstalled { engine.inputNode.removeTap(onBus: 0) }
+        }
+        tapInstalled = false
     }
 
     // MARK: Wewnętrzne
@@ -144,6 +158,12 @@ final class SpeechListener {
         // W międzyczasie ktoś zatrzymał albo ponownie uruchomił nasłuch.
         guard token == startToken else { return }
 
+        // Poczekaj, aż sesja zgłosi działające wejście, i dopiero wtedy utwórz silnik.
+        for delay in [0, 200, 400, 800] where !Self.sessionInputReady {
+            try? await Task.sleep(for: .milliseconds(delay))
+            guard token == startToken else { return }
+        }
+        let engine = audioEngine()
         var format = engine.inputNode.outputFormat(forBus: 0)
         // Trasa audio bywa chwilowo w trakcie przebudowy (okno zgody, nowe urządzenie) – czekamy.
         // Nie tworzymy nowego AVAudioEngine: gdy usługa audio systemu nie odpowiada (format 0 Hz),
@@ -161,13 +181,15 @@ final class SpeechListener {
             throw ListenerError.microphoneUnavailable(details: Self.inputDiagnostics(format: format))
         }
         let input = engine.inputNode
-        input.removeTap(onBus: 0)
+        if tapInstalled { input.removeTap(onBus: 0) }
         input.installTap(onBus: 0, bufferSize: 1024, format: format, block: router.tapBlock())
+        tapInstalled = true
         engine.prepare()
         do {
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
+            tapInstalled = false
             mode = .idle
             throw error
         }
