@@ -63,7 +63,7 @@ final class AssistantController: ToolContext {
     private(set) var lastEngine: String?
     @ObservationIgnored private var currentTurn: Task<Void, Never>?
     @ObservationIgnored private var scenePhase: ScenePhase = .active
-    @ObservationIgnored private var interruptionObserver: NSObjectProtocol?
+    @ObservationIgnored private var audioObservers: [NSObjectProtocol] = []
 
     private init() {
         listener.onEvent = { [weak self] event in self?.handle(event) }
@@ -81,12 +81,19 @@ final class AssistantController: ToolContext {
         ) { _ in
             MainActor.assumeIsolated { MLXEngine.shared.unload() }
         }
-        interruptionObserver = NotificationCenter.default.addObserver(
-            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
-        ) { [weak self] notification in
-            let type = (notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt).flatMap(AVAudioSession.InterruptionType.init)
-            MainActor.assumeIsolated { self?.handleInterruption(type) }
-        }
+        // iOS 27: sesja audio przerwana (połączenie, Siri, inna aplikacja) / system zaleca wznowienie.
+        audioObservers = [
+            NotificationCenter.default.addObserver(
+                forName: AVAudioSession.didBecomeInactiveNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.audioSessionBecameInactive() }
+            },
+            NotificationCenter.default.addObserver(
+                forName: AVAudioSession.resumptionRecommendationNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.audioSessionMayResume() }
+            },
+        ]
     }
 
     // MARK: ToolContext
@@ -133,19 +140,27 @@ final class AssistantController: ToolContext {
         resumeWakeListening()
     }
 
-    func resumeWakeListening() {
+    /// Wznawia nasłuch „Hej Janek”. Gdy już trwa, nic nie robi (chyba że `forceRestart`) –
+    /// scena wielokrotnie wraca do stanu aktywnego, np. po każdym oknie zgody systemu.
+    func resumeWakeListening(forceRestart: Bool = false) {
         guard !state.isBusy else { return }
         listener.configure(sensitivity: settings.wakeSensitivity, onDevice: settings.onDeviceRecognition)
-        guard settings.wakeWordEnabled, SpeechListener.isAuthorized else {
+        guard settings.wakeWordEnabled, SpeechListener.isAuthorized, AudioSessionController.recordPermissionGranted else {
             listener.stop()
             state = .idle
             return
         }
-        do {
-            try listener.startWakeWordListening()
+        if listener.mode == .wakeWord && !forceRestart {
             state = .waitingForWakeWord
-        } catch {
-            state = .error(error.localizedDescription)
+            return
+        }
+        state = .waitingForWakeWord
+        Task {
+            do {
+                try await listener.startWakeWordListening()
+            } catch {
+                if state == .waitingForWakeWord { state = .error(error.localizedDescription) }
+            }
         }
     }
 
@@ -157,12 +172,14 @@ final class AssistantController: ToolContext {
             cancelCurrentTurn()
         }
         listener.configure(sensitivity: settings.wakeSensitivity, onDevice: settings.onDeviceRecognition)
-        do {
-            Earcons.listening()
-            try listener.startCommandListening()
-            state = .listening(partial: "")
-        } catch {
-            state = .error(error.localizedDescription)
+        Earcons.listening()
+        state = .listening(partial: "")
+        Task {
+            do {
+                try await listener.startCommandListening()
+            } catch {
+                state = .error(error.localizedDescription)
+            }
         }
     }
 
@@ -209,16 +226,13 @@ final class AssistantController: ToolContext {
         }
     }
 
-    private func handleInterruption(_ type: AVAudioSession.InterruptionType?) {
-        switch type {
-        case .began:
-            listener.stop()
-            speech.stop()
-        case .ended:
-            if !state.isBusy { resumeWakeListening() }
-        default:
-            break
-        }
+    private func audioSessionBecameInactive() {
+        listener.stop()
+        speech.stop()
+    }
+
+    private func audioSessionMayResume() {
+        if !state.isBusy { resumeWakeListening() }
     }
 
     // MARK: Tura rozmowy
