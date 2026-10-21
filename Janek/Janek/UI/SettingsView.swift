@@ -74,7 +74,7 @@ struct SettingsView: View {
             }
             .onChange(of: settings.wakeWordEnabled) { controller.resumeWakeListening() }
             .onChange(of: settings.wakeSensitivity) { controller.resumeWakeListening() }
-            .onChange(of: settings.onDeviceRecognition) { controller.resumeWakeListening() }
+            .onChange(of: settings.onDeviceRecognition) { controller.resumeWakeListening(forceRestart: true) }
 
             Section {
                 Picker("Głos", selection: Binding(get: { settings.voiceIdentifier ?? "" }, set: { settings.voiceIdentifier = $0.isEmpty ? nil : $0 })) {

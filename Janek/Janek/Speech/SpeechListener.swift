@@ -12,6 +12,24 @@ import os
 final class SpeechListener {
     enum Mode: Equatable { case idle, wakeWord, command }
 
+    enum ListenerError: LocalizedError {
+        case recognizerUnavailable
+        case microphoneUnavailable
+
+        var errorDescription: String? {
+            switch self {
+            case .recognizerUnavailable:
+                return "Rozpoznawanie mowy po polsku jest teraz niedostępne."
+            case .microphoneUnavailable:
+                #if targetEnvironment(simulator)
+                return "Brak mikrofonu. Mac mini nie ma wbudowanego mikrofonu – podłącz słuchawki lub mikrofon i wybierz go w Symulatorze: I/O → Audio Input. Możesz też wpisywać polecenia."
+                #else
+                return "Mikrofon jest niedostępny. Sprawdź zgodę na mikrofon w Ustawieniach iOS → Janek."
+                #endif
+            }
+        }
+    }
+
     enum Event {
         case wakeWordDetected(initialCommand: String)
         case partialCommand(String)
@@ -29,6 +47,9 @@ final class SpeechListener {
     private var task: SFSpeechRecognitionTask?
     private var generation = 0
     private var restartTask: Task<Void, Never>?
+    /// Zwiększany przy każdym start/stop – przerywa start, który w międzyczasie stał się nieaktualny.
+    private var startToken = 0
+    private var configurationObserver: NSObjectProtocol?
 
     private(set) var mode: Mode = .idle
     private var detector = WakeWordDetector()
@@ -52,6 +73,15 @@ final class SpeechListener {
 
     var supportsOnDevice: Bool { recognizer?.supportsOnDeviceRecognition ?? false }
 
+    init() {
+        // Zmiana trasy audio (słuchawki, CarPlay, połączenie) zatrzymuje silnik – wznawiamy nasłuch.
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.restartAfterConfigurationChange() }
+        }
+    }
+
     func configure(sensitivity: WakeSensitivity, onDevice: Bool) {
         detector = WakeWordDetector(sensitivity: sensitivity)
         self.onDevice = onDevice
@@ -59,17 +89,19 @@ final class SpeechListener {
 
     // MARK: Sterowanie (wołane z głównego wątku)
 
-    func startWakeWordListening() throws {
-        try start(mode: .wakeWord)
+    func startWakeWordListening() async throws {
+        try await start(mode: .wakeWord)
     }
 
     /// Nasłuch polecenia bez frazy (przycisk, Action Button, odpowiedź na pytanie Janka).
-    func startCommandListening(prefix: String = "") throws {
-        try start(mode: .command)
+    func startCommandListening(prefix: String = "") async throws {
+        try await start(mode: .command)
+        guard mode == .command else { return }
         beginCommand(prefix)
     }
 
     func stop() {
+        startToken += 1
         mode = .idle
         endpointTimer?.invalidate()
         endpointTimer = nil
@@ -81,19 +113,67 @@ final class SpeechListener {
 
     // MARK: Wewnętrzne
 
-    private func start(mode newMode: Mode) throws {
-        guard let recognizer, recognizer.isAvailable else {
-            throw ToolError.unavailable("rozpoznawanie mowy po polsku")
-        }
+    private func start(mode newMode: Mode) async throws {
+        guard let recognizer, recognizer.isAvailable else { throw ListenerError.recognizerUnavailable }
         stop()
+        let token = startToken
         mode = newMode
-        try AudioSessionController.activate()
+        do {
+            try await AudioSessionController.activate()
+        } catch {
+            if token == startToken { mode = .idle }
+            throw error
+        }
+        // W międzyczasie ktoś zatrzymał albo ponownie uruchomił nasłuch.
+        guard token == startToken else { return }
+
         let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
+        var format = input.outputFormat(forBus: 0)
+        if !Self.isUsable(format) {
+            // Trasa audio bywa chwilowo w trakcie przebudowy (np. po oknie zgody) – czekamy chwilę.
+            try? await Task.sleep(for: .milliseconds(500))
+            guard token == startToken else { return }
+            format = input.outputFormat(forBus: 0)
+        }
+        // Format 0 Hz / 0 kanałów = brak mikrofonu. installTap rzuciłby wtedy wyjątkiem Obj-C (awaria aplikacji).
+        guard Self.isUsable(format) else {
+            mode = .idle
+            throw ListenerError.microphoneUnavailable
+        }
+        input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 1024, format: format, block: router.tapBlock())
         engine.prepare()
-        try engine.start()
+        do {
+            try engine.start()
+        } catch {
+            input.removeTap(onBus: 0)
+            mode = .idle
+            throw error
+        }
         startTask()
+    }
+
+    static func isUsable(_ format: AVAudioFormat) -> Bool {
+        format.sampleRate > 0 && format.channelCount > 0
+    }
+
+    private func restartAfterConfigurationChange() {
+        let current = mode
+        guard current != .idle else { return }
+        logger.info("Zmiana konfiguracji audio – wznawiam nasłuch")
+        let prefix = commandText
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                if current == .wakeWord {
+                    try await self.startWakeWordListening()
+                } else {
+                    try await self.startCommandListening(prefix: prefix)
+                }
+            } catch {
+                self.onEvent?(.error(error.localizedDescription))
+            }
+        }
     }
 
     private func startTask() {

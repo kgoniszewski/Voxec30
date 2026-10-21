@@ -133,19 +133,27 @@ final class AssistantController: ToolContext {
         resumeWakeListening()
     }
 
-    func resumeWakeListening() {
+    /// Wznawia nasłuch „Hej Janek”. Gdy już trwa, nic nie robi (chyba że `forceRestart`) –
+    /// scena wielokrotnie wraca do stanu aktywnego, np. po każdym oknie zgody systemu.
+    func resumeWakeListening(forceRestart: Bool = false) {
         guard !state.isBusy else { return }
         listener.configure(sensitivity: settings.wakeSensitivity, onDevice: settings.onDeviceRecognition)
-        guard settings.wakeWordEnabled, SpeechListener.isAuthorized else {
+        guard settings.wakeWordEnabled, SpeechListener.isAuthorized, AudioSessionController.recordPermissionGranted else {
             listener.stop()
             state = .idle
             return
         }
-        do {
-            try listener.startWakeWordListening()
+        if listener.mode == .wakeWord && !forceRestart {
             state = .waitingForWakeWord
-        } catch {
-            state = .error(error.localizedDescription)
+            return
+        }
+        state = .waitingForWakeWord
+        Task {
+            do {
+                try await listener.startWakeWordListening()
+            } catch {
+                if state == .waitingForWakeWord { state = .error(error.localizedDescription) }
+            }
         }
     }
 
@@ -157,12 +165,14 @@ final class AssistantController: ToolContext {
             cancelCurrentTurn()
         }
         listener.configure(sensitivity: settings.wakeSensitivity, onDevice: settings.onDeviceRecognition)
-        do {
-            Earcons.listening()
-            try listener.startCommandListening()
-            state = .listening(partial: "")
-        } catch {
-            state = .error(error.localizedDescription)
+        Earcons.listening()
+        state = .listening(partial: "")
+        Task {
+            do {
+                try await listener.startCommandListening()
+            } catch {
+                state = .error(error.localizedDescription)
+            }
         }
     }
 

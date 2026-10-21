@@ -30,7 +30,7 @@ final class SpeechOutput: NSObject, AVSpeechSynthesizerDelegate {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         stop()
-        try? AudioSessionController.activate(ducking: true)
+        try? await AudioSessionController.activate(ducking: true)
         let utterance = AVSpeechUtterance(string: Self.cleanForSpeech(trimmed))
         utterance.voice = Self.voice(identifier: settings.voiceIdentifier)
         utterance.rate = settings.speechRate
@@ -39,7 +39,7 @@ final class SpeechOutput: NSObject, AVSpeechSynthesizerDelegate {
             self.continuation = continuation
             synthesizer.speak(utterance)
         }
-        try? AudioSessionController.activate(ducking: false)
+        try? await AudioSessionController.activate(ducking: false)
     }
 
     func stop() {
