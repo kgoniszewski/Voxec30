@@ -58,7 +58,7 @@ enum AppleFoundationEngine {
         let response = try await session.respond(
             to: command,
             generating: GeneratedDecision.self,
-            options: GenerationOptions(sampling: .greedy, temperature: nil, maximumResponseTokens: 300)
+            options: GenerationOptions(samplingMode: .greedy, temperature: nil, maximumResponseTokens: 300)
         )
         return LocalCommandRouter.parse(tool: response.content.tool, argumentsJSON: response.content.argumentsJSON)
         #else

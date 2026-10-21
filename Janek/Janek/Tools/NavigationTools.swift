@@ -68,11 +68,10 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
 
 enum PlaceFormatting {
     static func address(of item: MKMapItem) -> String {
-        let placemark = item.placemark
-        return [placemark.thoroughfare.map { street in [street, placemark.subThoroughfare].compactMap { $0 }.joined(separator: " ") },
-                placemark.locality]
-            .compactMap { $0 }
-            .joined(separator: ", ")
+        item.addressRepresentations?.fullAddress(includingRegion: false, singleLine: true)
+            ?? item.address?.shortAddress
+            ?? item.address?.fullAddress
+            ?? ""
     }
 
     static func distance(_ meters: CLLocationDistance) -> String {
@@ -155,9 +154,8 @@ struct NearbySearchTool: AssistantTool {
         request.region = MKCoordinateRegion(center: location.coordinate, latitudinalMeters: 8_000, longitudinalMeters: 8_000)
         request.resultTypes = .pointOfInterest
         let items = try await MKLocalSearch(request: request).start().mapItems
-            .compactMap { item -> (MKMapItem, CLLocationDistance)? in
-                guard let itemLocation = item.placemark.location else { return nil }
-                return (item, itemLocation.distance(from: location))
+            .map { item -> (MKMapItem, CLLocationDistance) in
+                (item, item.location.distance(from: location))
             }
             .sorted { $0.1 < $1.1 }
             .prefix(5)
@@ -180,11 +178,19 @@ struct WhereAmITool: AssistantTool {
 
     func run(_ input: JSONValue, context: ToolContext) async throws -> ToolOutput {
         let location = try await LocationProvider.shared.currentLocation()
-        let placemarks = try await CLGeocoder().reverseGeocodeLocation(location, preferredLocale: Locale(identifier: "pl_PL"))
-        guard let placemark = placemarks.first else { throw ToolError.notFound("adres dla bieżącej pozycji") }
-        let street = [placemark.thoroughfare, placemark.subThoroughfare].compactMap { $0 }.joined(separator: " ")
-        let parts = [street.isEmpty ? nil : street, placemark.subLocality, placemark.locality, placemark.administrativeArea]
-            .compactMap { $0 }
-        return .ok("Użytkownik jest w pobliżu: \(parts.joined(separator: ", ")) (dokładność ok. \(Int(location.horizontalAccuracy)) m).")
+        guard let request = MKReverseGeocodingRequest(location: location) else {
+            throw ToolError.unavailable("ustalanie adresu")
+        }
+        let items: [MKMapItem] = try await withCheckedThrowingContinuation { continuation in
+            request.getMapItems { items, error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume(returning: items ?? []) }
+            }
+        }
+        guard let item = items.first else { throw ToolError.notFound("adres dla bieżącej pozycji") }
+        let address = item.addressRepresentations?.fullAddress(includingRegion: false, singleLine: true)
+            ?? item.address?.fullAddress
+            ?? item.addressRepresentations?.cityWithContext
+            ?? "nieznana okolica"
+        return .ok("Użytkownik jest w pobliżu: \(address) (dokładność ok. \(Int(location.horizontalAccuracy)) m).")
     }
 }

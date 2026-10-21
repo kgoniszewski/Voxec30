@@ -83,8 +83,9 @@ final class AlarmScheduler {
             } else {
                 throw ToolError.missingArgument("czas alarmu")
             }
-            let stop = AlarmButton(text: "Stop", textColor: .white, systemImageName: "stop.circle")
-            let alert = AlarmPresentation.Alert(title: LocalizedStringResource(stringLiteral: label), stopButton: stop)
+            // Przycisk „Stop” dodaje system (iOS 26.1+).
+            let alert = AlarmPresentation.Alert(title: LocalizedStringResource(stringLiteral: label),
+                                                secondaryButton: nil, secondaryButtonBehavior: nil)
             let attributes = AlarmAttributes<JanekAlarmMetadata>(
                 presentation: AlarmPresentation(alert: alert),
                 metadata: JanekAlarmMetadata(kind: kind, label: label),

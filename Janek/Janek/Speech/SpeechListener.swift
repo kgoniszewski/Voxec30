@@ -113,6 +113,10 @@ final class SpeechListener {
 
     // MARK: Wewnętrzne
 
+    // `installTap` jest oznaczone jako przestarzałe w iOS 27 na rzecz `installAudioTap`, ale nowe API
+    // przekazuje bufory tylko do odczytu (`AVReadOnlyAudioPCMBuffer`), których
+    // `SFSpeechAudioBufferRecognitionRequest.append` nie przyjmuje. Do czasu przejścia na
+    // SpeechAnalyzer zostajemy przy `installTap` (jedno świadome ostrzeżenie kompilatora).
     private func start(mode newMode: Mode) async throws {
         guard let recognizer, recognizer.isAvailable else { throw ListenerError.recognizerUnavailable }
         stop()
@@ -305,7 +309,6 @@ extension SpeechListener {
     ) -> @Sendable (SFSpeechRecognitionResult?, Error?) -> Void {
         { result, error in
             nonisolated(unsafe) let result = result
-            nonisolated(unsafe) let error = error
             DispatchQueue.main.async { MainActor.assumeIsolated { body(result, error) } }
         }
     }
